@@ -279,7 +279,7 @@ action:
 2.  Click the **dots (top-right) > Repositories**.
 3.  Add this repository URL: `https://github.com/danyial/ha-wa-bridge`
 4.  Reload the store and install **WhatsApp Bridge**.
-5.  Start the Add-on.
+5.  Start the Add-on. Home Assistant then offers the **WhatsApp** integration under *Settings → Devices & services* (discovered, with address and access token filled in).
 
 #### Option B: Docker (For Container/Core users)
 This project requires a small bridge service. Create a `docker-compose.yaml` file with the following content:
@@ -295,6 +295,9 @@ services:
     volumes:
       - ${CONFIG_DIR}/ha-wa-bridge/.wa_auth:/usr/src/app/.wwebjs_auth
     environment:
+      # Access token for Home Assistant. Leave unset to have one generated and
+      # stored in .wa_auth/auth_token (enter it when adding the integration).
+      # - AUTH_TOKEN=change-me-to-a-long-random-string
       # - WA_WEB_VERSION=2.3000.1017054665 # Emergency pin only; empty = always the live WhatsApp Web version
 
       # Forward messages you send yourself (groups only)
@@ -307,11 +310,11 @@ services:
       # - numbers_only → direct messages from ALLOWED_NUMBERS only
       - INCOMING_MESSAGES_MODE=all
 
-      # Logging level for incoming messages: FULL | COMPACT | NONE
-      # - FULL    → log entire message payload (default)
-      # - COMPACT → log only sender and message type
+      # Logging level for incoming messages: COMPACT | FULL | NONE
+      # - COMPACT → log only sender and message type (default)
+      # - FULL    → log entire message payload, including its text
       # - NONE    → disable logging for incoming messages
-      - INCOMING_MESSAGE_LOG_LEVEL=FULL
+      - INCOMING_MESSAGE_LOG_LEVEL=COMPACT
 
       # Comma-separated group names — only these groups are forwarded (optional)
       # - ALLOWED_GROUPS=Family Group,Work Team
@@ -339,9 +342,21 @@ docker-compose up -d
 1.  Copy the `custom_components/whatsapp` folder to your Home Assistant `config/custom_components/` directory.
 2.  Restart Home Assistant.
 
+## Security
+
+- **Access token.** Every WebSocket connection must send `Authorization: Bearer <token>`; without it the bridge answers `401` and nothing else. The add-on generates the token on first start (`/data/auth_token`, readable only by the add-on) and hands it to Home Assistant through Supervisor discovery. Set the option `auth_token` (Docker: `AUTH_TOKEN`) only to use a token of your own.
+- **No host port.** The add-on does not publish port 3000 on the host; Home Assistant reaches it on the internal add-on network. Map a host port in the add-on's *Network* settings only for an external client, and keep the token secret.
+- **Chromium** runs without `--disable-web-security` and `--ignore-certificate-errors`.
+- **Logs** contain no message text by default (`COMPACT`), no media payloads and never the token.
+- **Media URLs** may point anywhere reachable over http(s), including the LAN (cameras); downloads are limited to 16 MB and 30 s. Local files must be in `allowlist_external_dirs`.
+- **Group names are ambiguous.** Sending to a group name fails if more than one group has that name (someone could create a group with the same name and add you); use `group_id` for anything important.
+- The WhatsApp session (keys to your account) lives in the add-on's `/data` and is part of Home Assistant backups. Encrypt your backups.
+
 ## Configuration
 
 ### Add-on Configuration
+
+- **`auth_token`** *(optional)*: Access token the bridge requires. Leave empty to use the generated one.
 If you are using the Home Assistant Add-on, you can configure the following options in the add-on configuration tab:
 
 - **`detect_own_messages`**: Set to `true` to forward messages sent by your own account (e.g., from WhatsApp Web or your phone). Works for group messages only. Default: `false`.
@@ -353,8 +368,8 @@ If you are using the Home Assistant Add-on, you can configure the following opti
   - `numbers_only` – only direct messages from phone numbers listed in `allowed_numbers` are forwarded; group messages are ignored.
 
 - **`incoming_message_log_level`**: Controls the amount of detail logged in the Add-on logs when receiving messages or poll votes. Accepted values:
-  - `FULL` *(default)* – logs the entire raw message payload.
-  - `COMPACT` – logs only basic info like sender identification and message type ("Message received from X"). Message bodies and selected options are omitted.
+  - `COMPACT` *(default)* – logs only basic info like sender identification and message type ("Message received from X"). Message bodies and selected options are omitted.
+  - `FULL` – logs the entire raw message payload, including its text.
   - `NONE` – disables all logging for incoming messages. This is the most private option.
 
 - **`allowed_groups`**: An optional list of group names. When set, **only** messages from groups whose name exactly matches one of the entries are forwarded. Useful if you only care about a single group. Example:
@@ -380,8 +395,10 @@ All options are also available as environment variables:
       - DETECT_OWN_MESSAGES=true
       # Options: all | disabled | groups_only | numbers_only
       - INCOMING_MESSAGES_MODE=disabled
-      # Options: FULL | COMPACT | NONE
-      - INCOMING_MESSAGE_LOG_LEVEL=FULL
+      # Options: COMPACT | FULL | NONE
+      - INCOMING_MESSAGE_LOG_LEVEL=COMPACT
+      # Access token (optional; generated into the auth volume if unset)
+      - AUTH_TOKEN=change-me-to-a-long-random-string
       # Comma-separated group names (optional)
       - ALLOWED_GROUPS=Family Group,Work Team
       # Comma-separated phone numbers without '+' (optional)
@@ -390,12 +407,17 @@ All options are also available as environment variables:
 
 ### Integration Setup
 
-1.  Go to **Settings > Devices & Services**.
-2.  Click **Add Integration** and search for **WhatsApp**.
-4.  **Click Submit**. The integration will be added immediately.
-    1. **if asked** for a host, see the WhatsApp Bridge Add-on for **hostname**(info-tab) and **port**(configuration-tab), eg. "ws://cf9fc682-ha-wa-bridge:3000"
-5.  Check your **Home Assistant Notifications** (bell icon) for the QR code.
-6.  **Scan the QR Code** with your WhatsApp mobile app (Linked Devices).
+**With the add-on:** after starting it, Home Assistant shows a discovered **WhatsApp** integration under *Settings → Devices & services*. Click **Add** and confirm.
+
+**Bridge elsewhere (Docker):** *Add integration → WhatsApp*, then enter the WebSocket URL (e.g. `ws://192.168.1.10:3000`) and the access token (`AUTH_TOKEN`, or the generated `auth_token` file in the bridge's data volume).
+
+Then check your **notifications** (bell icon) for the QR code and scan it with WhatsApp on your phone (*Settings → Linked devices*).
+
+**Upgrading from 2.x:** the bridge now requires a token. After updating add-on and integration, Home Assistant asks you to re-authenticate the integration; with the add-on, restarting it is enough (discovery supplies the token).
+
+### Service responses
+
+`send_message`, `send_poll`, `send_event`, `send_broadcast` and `get_groups` can return data (`response_variable` in scripts), e.g. the sent message id or the group list. All services now fail with an error instead of silently doing nothing when the bridge is unreachable, WhatsApp is not linked, or a target is invalid.
 
 ## Development
 
