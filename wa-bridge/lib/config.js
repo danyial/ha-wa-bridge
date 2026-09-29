@@ -35,7 +35,10 @@ function loadConfig(options = {}, env = process.env) {
 
     // Phone numbers in international format without '+', e.g. "40741234567".
     const allowedNumbers = toList(options.allowed_numbers || env.ALLOWED_NUMBERS || []);
-    const allowedNumbersSet = new Set(allowedNumbers.map(n => `${n}@c.us`));
+    // "+49 170 …" works too; entries are compared with resolved phone numbers.
+    const allowedNumbersSet = new Set(
+        allowedNumbers.map((n) => String(n).replace(/\D/g, '')).filter(Boolean).map((n) => `${n}@c.us`),
+    );
 
     // Mode: 'COMPACT' (default: sender and type only) | 'FULL' (message
     // content, i.e. private data in the log) | 'NONE'

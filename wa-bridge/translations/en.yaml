@@ -26,9 +26,10 @@ configuration:
   allowed_numbers:
     name: Allowed Numbers
     description: >-
-      Optional. Phone numbers in international format without '+' (e.g. 40741234567).
-      When set, only messages from these numbers are forwarded. Required for
-      'numbers_only' mode; also works as an extra filter in 'all' mode.
+      Optional. Phone numbers in international format (e.g. +40 741 234567).
+      When set, only direct messages from these numbers are forwarded (LID senders
+      match once resolved). With Allowed Groups too, a message passes if its group
+      OR its sender is allowed. Required for 'numbers_only' mode.
   wa_web_version:
     name: WhatsApp Web version (emergency pin)
     description: >-
