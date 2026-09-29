@@ -68,9 +68,13 @@ image-build:
     STORAGE_DRIVER: vfs
     BUILDAH_ISOLATION: chroot
   rules:
+    # Compare with main, not the previous push, so every branch that touches
+    # the add-on gets a test build.
     - changes:
-        - wa-bridge/**/*
-        - .gitlab-ci.yml
+        paths:
+          - wa-bridge/**/*
+          - .gitlab-ci.yml
+        compare_to: refs/heads/main
   script:
     - buildah --version
     - buildah build --layers=false -t ha-wa-bridge:ci wa-bridge
