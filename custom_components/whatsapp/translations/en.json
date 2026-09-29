@@ -2,26 +2,33 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to WhatsApp Bridge",
-        "description": "Enter the WebSocket URL of the WhatsApp Bridge.",
+        "title": "Connect to the WhatsApp bridge",
+        "description": "Normally the WhatsApp Bridge add-on is discovered automatically. For a bridge outside Home Assistant enter its WebSocket URL and access token (file auth_token in the bridge's data directory, or the AUTH_TOKEN you set).",
         "data": {
-          "host": "Bridge WebSocket URL"
+          "host": "Bridge WebSocket URL",
+          "token": "Access token"
         }
       },
-      "scan": {
-        "title": "Scan QR Code",
-        "description": "Setup is almost complete!\n\nClick **Submit** to finish adding the integration.\n\nAfter you submit, check your **Notifications** (bell icon) for the QR code to link your WhatsApp account."
+      "hassio_confirm": {
+        "title": "WhatsApp Bridge add-on",
+        "description": "Connect Home Assistant to the WhatsApp Bridge add-on? Afterwards a notification shows the QR code to link your WhatsApp account."
+      },
+      "reauth_confirm": {
+        "title": "WhatsApp bridge access token",
+        "description": "The bridge at {host} rejected the access token, or the integration was set up before the bridge required one. Enter the token (add-on: file /data/auth_token, or the add-on option auth_token).",
+        "data": {
+          "token": "Access token"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the bridge. Make sure the Node.js service is running.",
-      "not_ready": "WhatsApp is not ready yet. Please ensure you have scanned the QR code.",
-      "initializing": "WhatsApp client is initializing. Please try again in a few seconds.",
-      "no_qr_received": "No QR code received. If you are already logged in, check the logs.",
-      "unknown": "Unexpected error occurred. Please check the Home Assistant logs."
+      "cannot_connect": "Cannot reach the bridge. Is the add-on running and the URL right?",
+      "invalid_auth": "The bridge rejected the access token.",
+      "unknown": "Unexpected error, see the Home Assistant log."
     },
     "abort": {
-      "already_configured": "Device is already configured"
+      "already_configured": "WhatsApp is already configured.",
+      "reauth_successful": "Access token updated."
     }
   },
   "triggers": {
