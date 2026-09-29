@@ -37,14 +37,21 @@ function loadConfig(options = {}, env = process.env) {
     const allowedNumbers = toList(options.allowed_numbers || env.ALLOWED_NUMBERS || []);
     const allowedNumbersSet = new Set(allowedNumbers.map(n => `${n}@c.us`));
 
-    // Mode: 'FULL' (default) | 'COMPACT' | 'NONE'
-    const incomingLogLevel = (options.incoming_message_log_level || env.INCOMING_MESSAGE_LOG_LEVEL || 'FULL').toUpperCase();
+    // Mode: 'COMPACT' (default: sender and type only) | 'FULL' (message
+    // content, i.e. private data in the log) | 'NONE'
+    const incomingLogLevel = (options.incoming_message_log_level || env.INCOMING_MESSAGE_LOG_LEVEL || 'COMPACT').toUpperCase();
 
     // Optional emergency pin of the WhatsApp Web version, e.g. "2.3000.1017054665".
     // Empty: always load the live version.
     const waWebVersion = (options.wa_web_version || env.WA_WEB_VERSION || '').trim();
 
+    // Token clients must present; empty = generated and stored in the data dir.
+    const authToken = (options.auth_token || env.AUTH_TOKEN || '').trim();
+    const port = Number(env.PORT || 3000);
+
     return {
+        authToken,
+        port,
         waWebVersion,
         detectOwnMessages,
         incomingMode,

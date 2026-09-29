@@ -1,214 +1,195 @@
+"""WebSocket client for the wa-bridge add-on."""
+
+from __future__ import annotations
+
 import asyncio
-import json
+import itertools
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import aiohttp
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from .const import PROTOCOL_VERSION
 
 _LOGGER = logging.getLogger(__name__)
 
+HEARTBEAT = 30
+REQUEST_TIMEOUT = 60
+BACKOFF_MIN = 1
+BACKOFF_MAX = 60
+
+
+class BridgeError(Exception):
+    """A command failed on the bridge or the bridge is unreachable."""
+
+    def __init__(self, message: str, code: str = "error") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class BridgeAuthError(BridgeError):
+    """The bridge rejected the token."""
+
+    def __init__(self) -> None:
+        super().__init__("The bridge rejected the access token", "invalid_auth")
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def async_probe(hass: HomeAssistant, url: str, token: str) -> dict[str, Any]:
+    """Connect once and return the bridge's hello frame (config flow check)."""
+    session = async_get_clientsession(hass)
+    try:
+        async with (
+            asyncio.timeout(10),
+            session.ws_connect(url, headers=auth_headers(token)) as ws,
+        ):
+            while True:
+                frame = await ws.receive_json()
+                if frame.get("type") == "hello":
+                    return frame
+    except aiohttp.WSServerHandshakeError as err:
+        if err.status == 401:
+            raise BridgeAuthError from err
+        raise BridgeError(
+            f"Handshake failed: HTTP {err.status}", "cannot_connect"
+        ) from err
+    except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+        raise BridgeError(str(err) or "no answer", "cannot_connect") from err
+
 
 class WhatsAppBridge:
-    def __init__(self, hass: HomeAssistant, host: str):
+    """Keeps a WebSocket connection to the bridge and correlates commands."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        url: str,
+        token: str,
+        on_frame: Callable[[dict[str, Any]], Awaitable[None]],
+        on_auth_failed: Callable[[], None],
+    ) -> None:
         self.hass = hass
-        self.host = host
-        self._session = None
-        self._ws = None
+        self.url = url
+        self._token = token
+        self._on_frame = on_frame
+        self._on_auth_failed = on_auth_failed
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._running = False
-        self.connection_status = "disconnected"
+        self._ids = itertools.count(1)
+        self._pending: dict[int, asyncio.Future[Any]] = {}
+        self.hello: dict[str, Any] | None = None
 
-    async def start(self, event_callback=None):
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None and not self._ws.closed
+
+    async def run(self) -> None:
+        """Connect and reconnect until stopped; returns on auth failure."""
         self._running = True
-
+        session = async_get_clientsession(self.hass)
+        backoff = BACKOFF_MIN
         while self._running:
             try:
-                if not self._session:
-                    self._session = aiohttp.ClientSession()
-
-                _LOGGER.info("Connecting to WhatsApp Bridge at %s", self.host)
-                async with self._session.ws_connect(self.host) as ws:
+                async with session.ws_connect(
+                    self.url, headers=auth_headers(self._token), heartbeat=HEARTBEAT
+                ) as ws:
                     self._ws = ws
-                    self.connection_status = "connected"
-                    _LOGGER.info("Connected to WhatsApp Bridge")
-
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            data = json.loads(msg.data)
-                            if event_callback:
-                                await event_callback(data)
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            _LOGGER.error(
-                                "WhatsApp Bridge connection error: %s", ws.exception()
-                            )
-                            break
-            except Exception as e:
-                _LOGGER.error("Error connecting to WhatsApp Bridge: %s", e)
-                self.connection_status = "error"
-
+                    backoff = BACKOFF_MIN
+                    _LOGGER.info("Connected to WhatsApp bridge at %s", self.url)
+                    await self._read(ws)
+            except aiohttp.WSServerHandshakeError as err:
+                if err.status == 401:
+                    _LOGGER.error("The WhatsApp bridge rejected the access token")
+                    self._running = False
+                    self._on_auth_failed()
+                    return
+                _LOGGER.warning("WhatsApp bridge handshake failed: HTTP %s", err.status)
+            except (aiohttp.ClientError, TimeoutError) as err:
+                _LOGGER.warning("WhatsApp bridge not reachable: %s", err)
+            finally:
+                self._ws = None
+                self._fail_pending(
+                    BridgeError("Connection to the bridge lost", "disconnected")
+                )
             if self._running:
-                self.connection_status = "reconnecting"
-                _LOGGER.info("Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, BACKOFF_MAX)
 
-    async def stop(self):
+    async def _read(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        async for msg in ws:
+            if msg.type is not aiohttp.WSMsgType.TEXT:
+                continue
+            try:
+                frame = msg.json()
+            except ValueError:
+                _LOGGER.warning("Ignoring invalid frame from the bridge")
+                continue
+            if not isinstance(frame, dict):
+                continue
+            if frame.get("type") == "result":
+                self._resolve(frame)
+                continue
+            if frame.get("type") == "hello":
+                self._check_hello(frame)
+            try:
+                await self._on_frame(frame)
+            except Exception:
+                _LOGGER.exception("Error handling bridge frame %s", frame.get("type"))
+
+    def _check_hello(self, frame: dict[str, Any]) -> None:
+        self.hello = frame
+        if frame.get("protocol") != PROTOCOL_VERSION:
+            _LOGGER.warning(
+                "WhatsApp bridge speaks protocol %s, this integration %s; "
+                "update the add-on and the integration to the same version",
+                frame.get("protocol"),
+                PROTOCOL_VERSION,
+            )
+
+    def _resolve(self, frame: dict[str, Any]) -> None:
+        future = self._pending.pop(frame.get("id"), None)
+        if future is None or future.done():
+            return
+        if frame.get("ok"):
+            future.set_result(frame.get("data"))
+        else:
+            future.set_exception(
+                BridgeError(
+                    frame.get("error") or "unknown error", frame.get("code") or "error"
+                )
+            )
+
+    def _fail_pending(self, err: BridgeError) -> None:
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(err)
+        self._pending.clear()
+
+    async def request(self, command: dict[str, Any]) -> Any:
+        """Send a command and wait for its result."""
+        ws = self._ws
+        if ws is None or ws.closed:
+            raise BridgeError("Not connected to the WhatsApp bridge", "disconnected")
+        request_id = next(self._ids)
+        future: asyncio.Future[Any] = self.hass.loop.create_future()
+        self._pending[request_id] = future
+        try:
+            await ws.send_json({**command, "id": request_id})
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                return await future
+        except TimeoutError as err:
+            raise BridgeError("The bridge did not answer in time", "timeout") from err
+        finally:
+            self._pending.pop(request_id, None)
+
+    async def stop(self) -> None:
         self._running = False
-        if self._ws:
+        if self._ws is not None:
             await self._ws.close()
-        if self._session:
-            await self._session.close()
-
-    async def send_message(
-        self,
-        number: str | None,
-        message: str,
-        group_name: str | None = None,
-        group_id: str | None = None,
-        media: dict | None = None,
-    ):
-        """Send a message via the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot send message")
-            return
-
-        payload = {"type": "send_message", "message": message}
-
-        if number:
-            payload["number"] = number
-
-        if group_name:
-            payload["group_name"] = group_name
-
-        if group_id:
-            payload["group_id"] = group_id
-
-        if media:
-            payload["media"] = media
-
-        if not number and not group_name and not group_id:
-            _LOGGER.error("Neither number, group_name, nor group_id provided")
-            return
-
-        await self._ws.send_json(payload)
-
-    async def send_broadcast(
-        self, targets: list[str], message: str, media: dict | None = None
-    ):
-        """Send a broadcast message via the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot send broadcast")
-            return
-
-        payload = {"type": "broadcast", "targets": targets, "message": message}
-
-        if media:
-            payload["media"] = media
-
-        await self._ws.send_json(payload)
-
-    async def send_poll(
-        self,
-        number: str | None,
-        group_name: str | None,
-        message: str,
-        options: list[str],
-        allow_multiple_answers: bool,
-        group_id: str | None = None,
-    ):
-        """Send a poll via the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot send poll")
-            return
-
-        payload = {
-            "type": "send_poll",
-            "message": message,
-            "options": options,
-            "allow_multiple_answers": allow_multiple_answers,
-        }
-
-        if number:
-            payload["number"] = number
-
-        if group_name:
-            payload["group_name"] = group_name
-
-        if group_id:
-            payload["group_id"] = group_id
-
-        if not number and not group_name and not group_id:
-            _LOGGER.error("Neither number, group_name, nor group_id provided for poll")
-            return
-
-        await self._ws.send_json(payload)
-
-    async def send_event(
-        self,
-        number: str | None,
-        group_name: str | None,
-        group_id: str | None,
-        name: str,
-        description: str | None = None,
-        location: str | None = None,
-        start_time: str = None,
-        end_time: str | None = None,
-        call_type: str | None = None,
-    ):
-        """Send an event via the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot send event")
-            return
-
-        payload = {
-            "type": "send_event",
-            "name": name,
-            "start_time": start_time,
-        }
-
-        if number:
-            payload["number"] = number
-        if group_name:
-            payload["group_name"] = group_name
-        if group_id:
-            payload["group_id"] = group_id
-        if description:
-            payload["description"] = description
-        if location:
-            payload["location"] = location
-        if end_time:
-            payload["end_time"] = end_time
-        if call_type:
-            payload["call_type"] = call_type
-
-        if not number and not group_name and not group_id:
-            _LOGGER.error("Neither number, group_name, nor group_id provided for event")
-            return
-
-        await self._ws.send_json(payload)
-
-    async def get_groups(self):
-        """Request the list of groups from the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot get groups")
-            return
-
-        await self._ws.send_json({"type": "get_groups"})
-
-    async def set_group_subject(self, group_id: str, subject: str):
-        """Set a group's subject (name) via the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot set group subject")
-            return
-
-        await self._ws.send_json(
-            {"type": "set_group_subject", "group_id": group_id, "subject": subject}
-        )
-
-    async def set_group_picture(self, group_id: str, media: dict):
-        """Set a group's picture via the bridge."""
-        if not self._ws or self._ws.closed:
-            _LOGGER.warning("Bridge not connected, cannot set group picture")
-            return
-
-        await self._ws.send_json(
-            {"type": "set_group_picture", "group_id": group_id, "media": media}
-        )
+        self._fail_pending(BridgeError("Integration unloaded", "disconnected"))

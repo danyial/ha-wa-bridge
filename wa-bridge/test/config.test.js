@@ -12,7 +12,9 @@ test('defaults', () => {
     const c = loadConfig({}, {});
     assert.equal(c.detectOwnMessages, false);
     assert.equal(c.incomingMode, 'all');
-    assert.equal(c.incomingLogLevel, 'FULL');
+    assert.equal(c.incomingLogLevel, 'COMPACT');
+    assert.equal(c.authToken, '');
+    assert.equal(c.port, 3000);
     assert.deepEqual(c.allowedGroups, []);
     assert.equal(c.allowedNumbersSet.size, 0);
 });

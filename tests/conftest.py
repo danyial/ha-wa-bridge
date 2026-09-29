@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import pytest
@@ -12,7 +12,16 @@ from aiohttp.test_utils import TestServer
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.whatsapp.const import CONF_HOST, DOMAIN
+from custom_components.whatsapp.const import (
+    CONF_HOST,
+    CONF_TOKEN,
+    DOMAIN,
+    PROTOCOL_VERSION,
+)
+
+TOKEN = "test-token"
+
+Reply = Callable[[dict[str, Any]], tuple[Any, ...] | None]
 
 
 @pytest.fixture(autouse=True)
@@ -21,36 +30,81 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 class FakeBridge:
-    """A scripted stand-in for the wa-bridge WebSocket server."""
+    """A scripted stand-in for the wa-bridge WebSocket server.
+
+    Commands with an `id` are answered by `replies[type](cmd)`, which returns
+    ("ok", data), ("error", code, message) or None (no answer). Unknown types
+    get ("ok", None).
+    """
 
     def __init__(self) -> None:
+        self.token = TOKEN
         self.received: list[dict[str, Any]] = []
-        self.hello: dict[str, Any] | None = {"type": "status", "status": "ready"}
+        self.greeting: list[dict[str, Any]] = [
+            {"type": "hello", "protocol": PROTOCOL_VERSION, "bridge_version": "t"},
+            {"type": "status", "status": "ready"},
+        ]
+        self.replies: dict[str, Reply] = {}
+        self.media: dict[str, tuple[bytes, dict[str, str]]] = {}
+        self.rejected = 0
         self._clients: set[web.WebSocketResponse] = set()
         self._connected = asyncio.Event()
         self._frame = asyncio.Event()
         self.server: TestServer | None = None
 
     @property
-    def url(self) -> str:
+    def base(self) -> str:
         assert self.server is not None
-        return f"ws://{self.server.host}:{self.server.port}/"
+        return f"{self.server.host}:{self.server.port}"
 
-    async def handler(self, request: web.Request) -> web.WebSocketResponse:
+    @property
+    def url(self) -> str:
+        return f"ws://{self.base}/"
+
+    async def handler(self, request: web.Request) -> web.StreamResponse:
+        if request.headers.get("Authorization") != f"Bearer {self.token}":
+            self.rejected += 1
+            return web.Response(status=401)
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self._clients.add(ws)
         self._connected.set()
-        if self.hello is not None:
-            await ws.send_json(self.hello)
+        for frame in self.greeting:
+            await ws.send_json(frame)
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
-                    self.received.append(msg.json())
-                    self._frame.set()
+                    await self._command(ws, msg.json())
         finally:
             self._clients.discard(ws)
         return ws
+
+    async def _command(self, ws: web.WebSocketResponse, cmd: dict[str, Any]) -> None:
+        self.received.append(cmd)
+        self._frame.set()
+        if "id" not in cmd:
+            return
+        reply = self.replies.get(cmd["type"], lambda _: ("ok", None))(cmd)
+        if reply is None:
+            return
+        if reply[0] == "ok":
+            await ws.send_json(
+                {"type": "result", "id": cmd["id"], "ok": True, "data": reply[1]}
+            )
+        else:
+            await ws.send_json(
+                {
+                    "type": "result",
+                    "id": cmd["id"],
+                    "ok": False,
+                    "code": reply[1],
+                    "error": reply[2],
+                }
+            )
+
+    async def media_handler(self, request: web.Request) -> web.Response:
+        body, headers = self.media[request.match_info["name"]]
+        return web.Response(body=body, headers=headers)
 
     async def wait_connected(self) -> None:
         await asyncio.wait_for(self._connected.wait(), 5)
@@ -79,6 +133,7 @@ async def bridge(socket_enabled: None) -> AsyncIterator[FakeBridge]:
     fake = FakeBridge()
     app = web.Application()
     app.router.add_get("/", fake.handler)
+    app.router.add_get("/media/{name}", fake.media_handler)
     fake.server = TestServer(app, host="127.0.0.1")
     await fake.server.start_server()
     yield fake
@@ -90,7 +145,10 @@ async def bridge(socket_enabled: None) -> AsyncIterator[FakeBridge]:
 def entry(bridge: FakeBridge) -> MockConfigEntry:
     """A config entry pointing at the fake bridge."""
     return MockConfigEntry(
-        domain=DOMAIN, title="WhatsApp", data={CONF_HOST: bridge.url}
+        domain=DOMAIN,
+        title="WhatsApp",
+        unique_id=DOMAIN,
+        data={CONF_HOST: bridge.url, CONF_TOKEN: TOKEN},
     )
 
 

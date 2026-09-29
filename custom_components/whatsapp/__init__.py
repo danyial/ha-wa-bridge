@@ -1,31 +1,29 @@
-"""The WhatsApp Integration integration."""
+"""The WhatsApp integration."""
 
 from __future__ import annotations
 
 import base64
 import io
 import logging
-import mimetypes
-import os
+from typing import Any
 
-import aiohttp
-import qrcode
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .client import WhatsAppBridge
 from .const import (
     CONF_HOST,
-    DEFAULT_HOST,
+    CONF_TOKEN,
     DOMAIN,
-    EVENT_GROUPS_RECEIVED,
     EVENT_MESSAGE_RECEIVED,
     EVENT_POLL_VOTE_RECEIVED,
 )
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,238 +31,70 @@ PLATFORMS: list[Platform] = []
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+type WhatsAppConfigEntry = ConfigEntry[WhatsAppBridge]
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the WhatsApp Integration component."""
+    """Set up the WhatsApp component."""
+    async_setup_services(hass)
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up WhatsApp Integration from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
+def _qr_png_base64(data: str) -> str:
+    """Render the pairing QR code (CPU work, run in the executor)."""
+    import qrcode  # heavy (Pillow), only needed while pairing
 
-    host = entry.data.get(CONF_HOST, DEFAULT_HOST)
+    buffer = io.BytesIO()
+    qrcode.make(data).save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
 
-    bridge = WhatsAppBridge(hass, host)
-    hass.data[DOMAIN][entry.entry_id] = bridge
 
-    async def bridge_event_callback(msg):
-        """Handle incoming messages from the bridge."""
-        if msg["type"] == "message":
-            # Fire HA Event
-            payload = msg.get("data", {})
-            hass.bus.async_fire(EVENT_MESSAGE_RECEIVED, payload)
+async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> bool:
+    """Set up WhatsApp from a config entry."""
+    if entry.unique_id is None:
+        # Entries from before the one-bridge-per-instance unique id.
+        hass.config_entries.async_update_entry(entry, unique_id=DOMAIN)
 
-        elif msg["type"] == "poll_vote":
-            # Fire HA Event for poll vote
-            payload = msg.get("data", {})
-            hass.bus.async_fire(EVENT_POLL_VOTE_RECEIVED, payload)
+    token = entry.data.get(CONF_TOKEN)
+    if not token:
+        # Entries from before the bridge required a token.
+        raise ConfigEntryAuthFailed("The WhatsApp bridge now requires an access token")
 
-        elif msg["type"] == "get_groups_response":
-            # Fire HA Event with the list of groups
-            groups = msg.get("data", [])
-            hass.bus.async_fire(EVENT_GROUPS_RECEIVED, {"groups": groups})
+    notification_id = f"whatsapp_qr_{entry.entry_id}"
 
-        elif msg["type"] == "qr":
-            # Generate QR Code Image
-            try:
-                qr_data = msg["data"]
-                img = qrcode.make(qr_data)
-                buffered = io.BytesIO()
-                img.save(buffered, format="PNG")
-                img_str = base64.b64encode(buffered.getvalue()).decode()
-
-                # Create Persistent Notification
-                notification_id = f"whatsapp_qr_{entry.entry_id}"
-                message = (
-                    f"Please scan the QR code to link your WhatsApp account.\n\n"
-                    f"![QR Code](data:image/png;base64,{img_str})"
-                )
-                persistent_notification.async_create(
-                    hass, message, "WhatsApp Authentication", notification_id
-                )
-            except Exception as e:
-                _LOGGER.error("Failed to generate QR notification: %s", e)
-
-        elif msg["type"] == "status":
-            status = msg.get("status")
-            _LOGGER.info("Bridge Status: %s", status)
-
-            if status == "authenticated" or status == "ready":
-                notification_id = f"whatsapp_qr_{entry.entry_id}"
+    async def on_frame(frame: dict[str, Any]) -> None:
+        frame_type = frame.get("type")
+        if frame_type == "message":
+            hass.bus.async_fire(EVENT_MESSAGE_RECEIVED, frame.get("data", {}))
+        elif frame_type == "poll_vote":
+            hass.bus.async_fire(EVENT_POLL_VOTE_RECEIVED, frame.get("data", {}))
+        elif frame_type == "qr":
+            png = await hass.async_add_executor_job(_qr_png_base64, frame["data"])
+            persistent_notification.async_create(
+                hass,
+                "Scan this QR code with WhatsApp (Settings → Linked devices) "
+                f"to link your account.\n\n![QR Code](data:image/png;base64,{png})",
+                "WhatsApp: link your account",
+                notification_id,
+            )
+        elif frame_type == "status":
+            _LOGGER.info("WhatsApp bridge status: %s", frame.get("status"))
+            if frame.get("status") in ("authenticated", "ready"):
                 persistent_notification.async_dismiss(hass, notification_id)
 
-    entry.async_create_background_task(
-        hass, bridge.start(bridge_event_callback), "whatsapp_bridge_connect"
+    bridge = WhatsAppBridge(
+        hass,
+        entry.data[CONF_HOST],
+        token,
+        on_frame,
+        on_auth_failed=lambda: entry.async_start_reauth(hass),
     )
-
-    # Register Service
-    # Register Service
-    async def get_media_data(hass, media_url, media_path):
-        """Helper to retrieve media data from URL or path."""
-        data = None
-        mimetype = None
-        filename = None
-
-        if media_url:
-            try:
-                async with (
-                    aiohttp.ClientSession() as session,
-                    session.get(media_url) as response,
-                ):
-                    response.raise_for_status()
-                    content = await response.read()
-                    data = base64.b64encode(content).decode("utf-8")
-                    mimetype = (
-                        response.headers.get("Content-Type")
-                        or mimetypes.guess_type(media_url)[0]
-                    )
-                    filename = os.path.basename(media_url)
-            except Exception as e:
-                _LOGGER.error("Failed to fetch media from URL %s: %s", media_url, e)
-                return None
-
-        elif media_path:
-            try:
-                if not hass.config.is_allowed_path(media_path):
-                    _LOGGER.error("Media path %s is not allowed", media_path)
-                    return None
-
-                def read_file():
-                    with open(media_path, "rb") as f:
-                        return f.read()
-
-                content = await hass.async_add_executor_job(read_file)
-                data = base64.b64encode(content).decode("utf-8")
-                mimetype = mimetypes.guess_type(media_path)[0]
-                filename = os.path.basename(media_path)
-            except Exception as e:
-                _LOGGER.error("Failed to read media from path %s: %s", media_path, e)
-                return None
-
-        if data:
-            return {
-                "mimetype": mimetype or "application/octet-stream",
-                "data": data,
-                "filename": filename or "media",
-            }
-        return None
-
-    async def handle_send_message(call: ServiceCall):
-        number = call.data.get("number")
-        group = call.data.get("group")
-        group_id = call.data.get("group_id")
-        message = call.data.get("message")
-        media_url = call.data.get("media_url")
-        media_path = call.data.get("media_path")
-
-        media = await get_media_data(hass, media_url, media_path)
-
-        await bridge.send_message(number, message, group, group_id, media)
-
-    hass.services.async_register(DOMAIN, "send_message", handle_send_message)
-
-    async def handle_send_broadcast(call: ServiceCall):
-        targets = call.data.get("targets", [])
-        message = call.data.get("message")
-        media_url = call.data.get("media_url")
-        media_path = call.data.get("media_path")
-
-        # Ensure targets is a list
-        if not isinstance(targets, list):
-            _LOGGER.error("Targets must be a list")
-            return
-
-        media = await get_media_data(hass, media_url, media_path)
-
-        await bridge.send_broadcast(targets, message, media)
-
-    hass.services.async_register(DOMAIN, "send_broadcast", handle_send_broadcast)
-
-    async def handle_send_poll(call: ServiceCall):
-        number = call.data.get("number")
-        group_name = call.data.get("group")
-        group_id = call.data.get("group_id")
-        message = call.data.get("message")
-        options = call.data.get("options")
-        allow_multiple_answers = call.data.get("allow_multiple_answers", False)
-
-        # Ensure options is a list
-        if not isinstance(options, list):
-            _LOGGER.error("Options must be a list")
-            return
-
-        await bridge.send_poll(
-            number, group_name, message, options, allow_multiple_answers, group_id
-        )
-
-    hass.services.async_register(DOMAIN, "send_poll", handle_send_poll)
-
-    async def handle_send_event(call: ServiceCall):
-        number = call.data.get("number")
-        group = call.data.get("group")
-        group_id = call.data.get("group_id")
-        name = call.data.get("name")
-        description = call.data.get("description")
-        location = call.data.get("location")
-        start_time = call.data.get("start_time")
-        end_time = call.data.get("end_time")
-        call_type = call.data.get("call_type")
-
-        await bridge.send_event(
-            number,
-            group,
-            group_id,
-            name,
-            description,
-            location,
-            start_time,
-            end_time,
-            call_type,
-        )
-
-    hass.services.async_register(DOMAIN, "send_event", handle_send_event)
-
-    async def handle_get_groups(call: ServiceCall):
-        await bridge.get_groups()
-
-    hass.services.async_register(DOMAIN, "get_groups", handle_get_groups)
-
-    async def handle_set_group_subject(call: ServiceCall):
-        group_id = call.data.get("group_id")
-        subject = call.data.get("subject")
-
-        if not group_id or not subject:
-            _LOGGER.error("group_id and subject are required for set_group_subject")
-            return
-
-        await bridge.set_group_subject(group_id, subject)
-
-    hass.services.async_register(DOMAIN, "set_group_subject", handle_set_group_subject)
-
-    async def handle_set_group_picture(call: ServiceCall):
-        group_id = call.data.get("group_id")
-        media_url = call.data.get("media_url")
-        media_path = call.data.get("media_path")
-
-        if not group_id:
-            _LOGGER.error("group_id is required for set_group_picture")
-            return
-
-        media = await get_media_data(hass, media_url, media_path)
-        if not media:
-            _LOGGER.error("No valid media provided for set_group_picture")
-            return
-
-        await bridge.set_group_picture(group_id, media)
-
-    hass.services.async_register(DOMAIN, "set_group_picture", handle_set_group_picture)
-
+    entry.runtime_data = bridge
+    entry.async_create_background_task(hass, bridge.run(), "whatsapp_bridge")
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> bool:
     """Unload a config entry."""
-    bridge = hass.data[DOMAIN].pop(entry.entry_id)
-    await bridge.stop()
+    await entry.runtime_data.stop()
     return True

@@ -16,8 +16,8 @@ configuration:
     name: Incoming Message Log Level
     description: >-
       Controls the amount of detail logged when receiving messages or poll votes.
-      'FULL' = log entire message payload (default); 'COMPACT' = log only sender
-      and message type; 'NONE' = disable logging for incoming messages.
+      'COMPACT' = sender and message type only (default); 'FULL' = entire message
+      including its text (private data in the add-on log); 'NONE' = no logging.
   allowed_groups:
     name: Allowed Groups
     description: >-
@@ -35,3 +35,11 @@ configuration:
       Leave empty to always load the current WhatsApp Web version (recommended).
       Only set a version such as 2.3000.1017054665 if the current one breaks the
       bridge; a pinned version stops working once WhatsApp retires it.
+  auth_token:
+    name: Access token (optional)
+    description: >-
+      Token that clients must send to use the bridge. Leave empty: a random token
+      is generated and handed to Home Assistant automatically (discovery). Set it
+      only for external clients, then enter the same value in the integration.
+network:
+  3000/tcp: WebSocket for external clients (token required; not needed for Home Assistant)
