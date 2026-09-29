@@ -47,12 +47,15 @@ jobs:
 
       - name: Normalize app information
         id: normalize
+        # The info helper returns JSON values ("…" with quotes, null); decode
+        # them here instead of letting the shell strip quotes from inlined
+        # expressions.
         env:
-          IMAGE: ${{ steps.info.outputs.image }}
-          VERSION: ${{ steps.info.outputs.version }}
-          NAME: ${{ steps.info.outputs.name }}
-          DESCRIPTION: ${{ steps.info.outputs.description }}
-          URL: ${{ steps.info.outputs.url }}
+          IMAGE: ${{ fromJSON(steps.info.outputs.image) }}
+          VERSION: ${{ fromJSON(steps.info.outputs.version) }}
+          NAME: ${{ fromJSON(steps.info.outputs.name) }}
+          DESCRIPTION: ${{ fromJSON(steps.info.outputs.description) }}
+          URL: ${{ fromJSON(steps.info.outputs.url) }}
         run: |
           echo "image_name=${IMAGE##*/}" >> "$GITHUB_OUTPUT"
           echo "registry_prefix=${IMAGE%/*}" >> "$GITHUB_OUTPUT"
