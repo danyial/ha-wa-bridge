@@ -7,7 +7,6 @@ RUN apt-get update \
         chromium \
         fonts-freefont-ttf \
         fonts-ipafont-gothic \
-        fonts-kacst \
         fonts-thai-tlwg \
         fonts-wqy-zenhei \
     && rm -rf /var/lib/apt/lists/*
