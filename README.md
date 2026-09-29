@@ -287,17 +287,15 @@ This project requires a small bridge service. Create a `docker-compose.yaml` fil
 ```yaml
 services:
   ha-wa-bridge:
-    image: ghcr.io/raulpetruta/ha-wa-bridge:latest
+    image: ghcr.io/danyial/ha-wa-bridge:latest
     container_name: ha-wa-bridge
     restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
       - ${CONFIG_DIR}/ha-wa-bridge/.wa_auth:/usr/src/app/.wwebjs_auth
-      - ${CONFIG_DIR}/ha-wa-bridge/.wa_cache:/usr/src/app/.wwebjs_cache
     environment:
-      - PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      # - WA_WEB_VERSION=2.3000.1017054665 # Emergency pin only; empty = always the live WhatsApp Web version
 
       # Forward messages you send yourself (groups only)
       - DETECT_OWN_MESSAGES=false
@@ -414,11 +412,23 @@ CI (GitLab) runs ruff, pytest, the bridge tests, hassfest, offline checks (`scri
 
 Add-on, bridge and integration share one version: `wa-bridge/config.yaml`, `wa-bridge/package.json` and `custom_components/whatsapp/manifest.json` must match (checked in CI).
 
+## Dependency updates
+
+whatsapp-web.js breaks whenever WhatsApp changes WhatsApp Web, so it is pinned exactly (npm release, or a commit of `wwebjs/whatsapp-web.js` main as a tarball URL when a needed fix is not released yet) and locked in `wa-bridge/package-lock.json`. The WhatsApp Web version itself is not pinned: the bridge always loads the live one (add-on option `wa_web_version` is an emergency pin).
+
+The CI job `wwebjs-update` (`scripts/wwebjs_update.py`) proposes updates as merge requests: a newer npm release, or, for a commit pin, a newer main head. Setup:
+
+1. Project access token: Settings → Access tokens, role *Developer*, scopes `api` and `write_repository`.
+2. CI/CD variable `WWEBJS_BOT_TOKEN` = that token, *masked* and *protected*.
+3. Pipeline schedule on `main` (e.g. weekly) with the variable `WWEBJS_UPDATE=true`.
+
+A green pipeline only proves the image builds. Check pairing, receiving and sending on a real session before merging an update.
+
 ## Releasing
 
 Development happens in a GitLab repository; GitHub is a push mirror of `main` and of protected `v*` tags. HACS and the Home Assistant add-on store read from GitHub.
 
-1. Bump the version in all three files (e.g. `3.0.0`), merge to `main`, wait for a green pipeline.
+1. Bump the version in all three files with `python scripts/bump_version.py 3.0.0`, merge to `main`, wait for a green pipeline.
 2. Create the tag and release on GitLab from `main`:
    ```sh
    glab release create v3.0.0 --ref main --name v3.0.0 --notes-file notes.md
@@ -428,7 +438,8 @@ Development happens in a GitLab repository; GitHub is a push mirror of `main` an
    ```sh
    gh api repos/danyial/ha-wa-bridge/git/refs/tags/v3.0.0
    ```
-4. Publish the same notes on GitHub; this is what HACS offers as an update:
+4. The mirrored tag triggers the GitHub workflow `Builder`, which publishes `ghcr.io/danyial/ha-wa-bridge:<version>` (amd64, aarch64). Wait for it: `gh run watch -R danyial/ha-wa-bridge`. The add-on store installs exactly this image version.
+5. Publish the same notes on GitHub; this is what HACS offers as an update:
    ```sh
    gh release create v3.0.0 --repo danyial/ha-wa-bridge --verify-tag --title v3.0.0 --notes-file notes.md
    ```

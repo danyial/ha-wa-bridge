@@ -3,6 +3,7 @@ stages:
   - test
   - validate
   - build
+  - maintenance
 
 default:
   tags:
@@ -39,6 +40,8 @@ node-test:
   script:
     - cd wa-bridge
     - node --version
+    # Lockfile must match package.json; no browser download needed for tests.
+    - npm ci --ignore-scripts
     - npm test
 
 hassfest:
@@ -83,3 +86,42 @@ image-build:
       --dockerfile "$CI_PROJECT_DIR/wa-bridge/Dockerfile"
       --custom-platform linux/amd64
       --no-push
+
+# Proposes whatsapp-web.js updates as merge requests (scripts/wwebjs_update.py).
+# Real runs: a pipeline schedule (or "Run pipeline") with WWEBJS_UPDATE=true
+# and the masked, protected variable WWEBJS_BOT_TOKEN (project access token,
+# role Developer, scopes api + write_repository). Branches that change the
+# script or the CI only do a dry run, which needs no token.
+wwebjs-update:
+  stage: maintenance
+  image: node:22-alpine
+  rules:
+    - if: $WWEBJS_UPDATE == "true" && ($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web")
+      variables:
+        DRY_RUN: "false"
+    - if: $CI_PIPELINE_SOURCE == "push"
+      changes:
+        paths:
+          - scripts/wwebjs_update.py
+          - .gitlab-ci.yml
+        compare_to: refs/heads/main
+      variables:
+        DRY_RUN: "true"
+  before_script:
+    - apk add --no-cache git python3 glab
+  script:
+    - |
+      if [ "$DRY_RUN" = "true" ]; then
+        python3 scripts/wwebjs_update.py --dry-run
+        exit 0
+      fi
+    - test -n "$WWEBJS_BOT_TOKEN" || { echo "WWEBJS_BOT_TOKEN is not set"; exit 1; }
+    - export GITLAB_TOKEN="$WWEBJS_BOT_TOKEN" GITLAB_HOST="$CI_SERVER_URL"
+    - git config user.name "ha-wa-bridge update bot"
+    - git config user.email "9865632+danyial@users.noreply.github.com"
+    # The CI checkout cannot push; authenticate through a credential helper
+    # instead of embedding the token in the remote URL.
+    - git remote set-url origin "$CI_PROJECT_URL.git"
+    - git config credential.helper '!f() { echo username=oauth2; echo "password=$WWEBJS_BOT_TOKEN"; }; f'
+    - git checkout -B "$CI_DEFAULT_BRANCH" "$CI_COMMIT_SHA"
+    - python3 scripts/wwebjs_update.py
