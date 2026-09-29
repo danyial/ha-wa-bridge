@@ -1,7 +1,8 @@
 import voluptuous as vol
-from homeassistant.const import CONF_PLATFORM, CONF_EVENT
-from homeassistant.core import HomeAssistant, CALLBACK_TYPE
-from homeassistant.helpers import config_validation as cv, trigger
+from homeassistant.const import CONF_PLATFORM
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import trigger
 from homeassistant.helpers.typing import ConfigType
 
 from .const import EVENT_MESSAGE_RECEIVED
@@ -16,6 +17,7 @@ TRIGGER_SCHEMA = cv.TRIGGER_BASE_SCHEMA.extend(
         vol.Optional("equals_text"): cv.string,
     }
 )
+
 
 async def async_attach_trigger(
     hass: HomeAssistant,
@@ -57,9 +59,8 @@ async def async_attach_trigger(
                 group_id = to
 
         # Check sender (from_number)
-        if from_number:
-            if sender != from_number and sender != f"{from_number}@c.us":
-                return
+        if from_number and sender not in (from_number, f"{from_number}@c.us"):
+            return
 
         # Check group by ID (from_group_id)
         if from_group_id:
@@ -88,13 +89,11 @@ async def async_attach_trigger(
                 return
 
         # Check content if configured
-        if contains_text:
-            if contains_text.lower() not in body.lower():
-                return
+        if contains_text and contains_text.lower() not in body.lower():
+            return
 
-        if equals_text:
-            if equals_text.strip().lower() != body.strip().lower():
-                return
+        if equals_text and equals_text.strip().lower() != body.strip().lower():
+            return
 
         await action(
             {
@@ -106,8 +105,7 @@ async def async_attach_trigger(
                     "from_group": chat_name,
                     "from_group_id": group_id,
                     "description": (
-                        f"WhatsApp message from "
-                        f"{chat_name if is_group else sender}"
+                        f"WhatsApp message from {chat_name if is_group else sender}"
                     ),
                 }
             },
