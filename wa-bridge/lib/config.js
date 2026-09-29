@@ -40,7 +40,12 @@ function loadConfig(options = {}, env = process.env) {
     // Mode: 'FULL' (default) | 'COMPACT' | 'NONE'
     const incomingLogLevel = (options.incoming_message_log_level || env.INCOMING_MESSAGE_LOG_LEVEL || 'FULL').toUpperCase();
 
+    // Optional emergency pin of the WhatsApp Web version, e.g. "2.3000.1017054665".
+    // Empty: always load the live version.
+    const waWebVersion = (options.wa_web_version || env.WA_WEB_VERSION || '').trim();
+
     return {
+        waWebVersion,
         detectOwnMessages,
         incomingMode,
         allowedGroups,
@@ -51,4 +56,19 @@ function loadConfig(options = {}, env = process.env) {
     };
 }
 
-module.exports = { readOptions, loadConfig };
+const WA_VERSION_URL = 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html';
+
+// whatsapp-web.js options selecting the WhatsApp Web version. By default the
+// live version is loaded and nothing is cached: a pinned version breaks as
+// soon as WhatsApp retires it.
+function webVersionOptions({ waWebVersion }) {
+    if (!waWebVersion) {
+        return { webVersionCache: { type: 'none' } };
+    }
+    return {
+        webVersion: waWebVersion,
+        webVersionCache: { type: 'remote', remotePath: WA_VERSION_URL, strict: true },
+    };
+}
+
+module.exports = { readOptions, loadConfig, webVersionOptions };

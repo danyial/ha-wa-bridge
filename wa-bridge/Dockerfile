@@ -1,26 +1,34 @@
-FROM node:18-slim
+FROM node:22-trixie-slim
 
-# Install system dependencies for Puppeteer
+# System Chromium: Google ships no Linux arm64 Chrome, and puppeteer's own
+# download is skipped (PUPPETEER_EXECUTABLE_PATH is set).
 RUN apt-get update \
-    && apt-get install -y git chromium fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 openssh-client \
-      --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+        chromium \
+        fonts-freefont-ttf \
+        fonts-ipafont-gothic \
+        fonts-thai-tlwg \
+        fonts-wqy-zenhei \
     && rm -rf /var/lib/apt/lists/*
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_DOWNLOAD=1 \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    NODE_ENV=production
 
 WORKDIR /usr/src/app
 
-COPY package*.json ./
-
-RUN npm install
+COPY package.json package-lock.json ./
+# --ignore-scripts: the only install script is puppeteer's browser download.
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY . .
-
-# Apply Hotfix during build to ensure it's baked into the image
-RUN node patch-fix.js
-
 RUN chmod +x run.sh
+
+# io.hass.* labels are set by the Home Assistant builder (CI) or by the
+# Supervisor when it builds the image locally.
+LABEL \
+    org.opencontainers.image.source="https://github.com/danyial/ha-wa-bridge" \
+    org.opencontainers.image.licenses="MIT"
 
 EXPOSE 3000
 

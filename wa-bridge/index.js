@@ -1,9 +1,10 @@
 const { Client, LocalAuth, MessageMedia, Poll, ScheduledEvent } = require('whatsapp-web.js');
 const { WebSocketServer } = require('ws');
 const qrcode = require('qrcode');
-const { readOptions, loadConfig } = require('./lib/config');
+const { readOptions, loadConfig, webVersionOptions } = require('./lib/config');
 
 const {
+    waWebVersion,
     detectOwnMessages,
     incomingMode,
     allowedGroups,
@@ -13,6 +14,7 @@ const {
     incomingLogLevel,
 } = loadConfig(readOptions());
 
+console.log(`WhatsApp Web version: ${waWebVersion || 'live (not pinned)'}`);
 console.log(`Incoming messages mode: ${incomingMode}`);
 console.log(`Incoming message log level: ${incomingLogLevel}`);
 if (allowedGroupsLower.length > 0) {
@@ -48,10 +50,7 @@ const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: process.env.WA_DATA_PATH || './.wwebjs_auth'
     }),
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
-    },
+    ...webVersionOptions({ waWebVersion }),
     puppeteer: {
         headless: true,
         args: [

@@ -1,6 +1,7 @@
 #!/bin/bash
+set -e
 
-# Detect Environment
+# Detect environment
 if [ -d "/data" ]; then
     echo "Running in Home Assistant Add-on environment"
     export WA_DATA_PATH=/data
@@ -9,13 +10,11 @@ else
     export WA_DATA_PATH=./.wwebjs_auth
 fi
 
-# Clean up stale locks to prevent "Browser already running" errors
+# Clean up stale Chromium locks to prevent "Browser already running" errors
+# after an unclean shutdown.
 SESSION_DIR="${WA_DATA_PATH}/session"
 echo "Cleaning up locks in ${SESSION_DIR}..."
-rm -rf "${SESSION_DIR}/Singleton"*
-rm -rf "${SESSION_DIR}/*/Singleton"*
+rm -f "${SESSION_DIR}"/Singleton* "${SESSION_DIR}"/*/Singleton*
 
-# Start the application
 echo "Starting WhatsApp Bridge..."
-sleep 3
-exec npm start
+exec node index.js

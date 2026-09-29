@@ -29,3 +29,9 @@ configuration:
       Optional. Phone numbers in international format without '+' (e.g. 40741234567).
       When set, only messages from these numbers are forwarded. Required for
       'numbers_only' mode; also works as an extra filter in 'all' mode.
+  wa_web_version:
+    name: WhatsApp Web version (emergency pin)
+    description: >-
+      Leave empty to always load the current WhatsApp Web version (recommended).
+      Only set a version such as 2.3000.1017054665 if the current one breaks the
+      bridge; a pinned version stops working once WhatsApp retires it.
