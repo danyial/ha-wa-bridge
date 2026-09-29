@@ -21,7 +21,9 @@ def main() -> int:
     errors: list[str] = []
     config = yaml.safe_load((ADDON / "config.yaml").read_text())
 
-    errors.extend(f"config.yaml: '{key}' missing" for key in REQUIRED if key not in config)
+    errors.extend(
+        f"config.yaml: '{key}' missing" for key in REQUIRED if key not in config
+    )
     if unknown := set(config.get("arch", [])) - SUPPORTED_ARCH:
         # Warn only: dropping armv7 is part of the image rework.
         print(f"WARNING: arch not supported by Home Assistant: {sorted(unknown)}")
@@ -30,7 +32,9 @@ def main() -> int:
     schema = config.get("schema") or {}
     if missing := set(options) - set(schema):
         errors.append(f"options without schema: {sorted(missing)}")
-    if extra := {k for k in set(schema) - set(options) if not str(schema[k]).endswith("?")}:
+    if extra := {
+        k for k in set(schema) - set(options) if not str(schema[k]).endswith("?")
+    }:
         errors.append(f"required schema keys without default option: {sorted(extra)}")
 
     if "image" not in config and not (ADDON / "Dockerfile").is_file():
