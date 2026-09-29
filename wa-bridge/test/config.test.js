@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { readOptions, loadConfig } = require('../lib/config');
+const { readOptions, loadConfig, webVersionOptions } = require('../lib/config');
 
 test('defaults', () => {
     const c = loadConfig({}, {});
@@ -58,4 +58,20 @@ test('readOptions: reads JSON', () => {
     fs.writeFileSync(file, JSON.stringify({ incoming_messages_mode: 'disabled' }));
     assert.deepEqual(readOptions(file), { incoming_messages_mode: 'disabled' });
     fs.rmSync(dir, { recursive: true });
+});
+
+test('WhatsApp Web version: live by default', () => {
+    const c = loadConfig({}, {});
+    assert.equal(c.waWebVersion, '');
+    assert.deepEqual(webVersionOptions(c), { webVersionCache: { type: 'none' } });
+});
+
+test('WhatsApp Web version: optional pin', () => {
+    const c = loadConfig({ wa_web_version: ' 2.3000.1017054665 ' }, {});
+    const o = webVersionOptions(c);
+    assert.equal(o.webVersion, '2.3000.1017054665');
+    assert.equal(o.webVersionCache.type, 'remote');
+    assert.equal(o.webVersionCache.strict, true);
+    assert.match(o.webVersionCache.remotePath, /\{version\}\.html$/);
+    assert.equal(loadConfig({}, { WA_WEB_VERSION: '2.1' }).waWebVersion, '2.1');
 });

@@ -25,8 +25,7 @@ def main() -> int:
         f"config.yaml: '{key}' missing" for key in REQUIRED if key not in config
     )
     if unknown := set(config.get("arch", [])) - SUPPORTED_ARCH:
-        # Warn only: dropping armv7 is part of the image rework.
-        print(f"WARNING: arch not supported by Home Assistant: {sorted(unknown)}")
+        errors.append(f"arch not supported by Home Assistant: {sorted(unknown)}")
 
     options = config.get("options") or {}
     schema = config.get("schema") or {}
