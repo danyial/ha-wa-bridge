@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit der WhatsApp-Bridge verbinden",
+        "description": "Normalerweise wird das Add-on „WhatsApp Bridge“ automatisch erkannt. Für eine Bridge außerhalb von Home Assistant WebSocket-URL und Zugangstoken eingeben (Datei auth_token im Datenverzeichnis der Bridge oder das gesetzte AUTH_TOKEN).",
+        "data": {
+          "host": "WebSocket-URL der Bridge",
+          "token": "Zugangstoken"
+        }
+      },
+      "hassio_confirm": {
+        "title": "Add-on WhatsApp Bridge",
+        "description": "Home Assistant mit dem Add-on „WhatsApp Bridge“ verbinden? Danach zeigt eine Benachrichtigung den QR-Code zum Verknüpfen deines WhatsApp-Kontos."
+      },
+      "reauth_confirm": {
+        "title": "Zugangstoken der WhatsApp-Bridge",
+        "description": "Die Bridge unter {host} hat das Zugangstoken abgelehnt, oder die Integration wurde eingerichtet, bevor die Bridge eines verlangte. Token eingeben (Add-on: Datei /data/auth_token oder Option auth_token).",
+        "data": {
+          "token": "Zugangstoken"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Bridge nicht erreichbar. Läuft das Add-on, stimmt die URL?",
+      "invalid_auth": "Die Bridge hat das Zugangstoken abgelehnt.",
+      "unknown": "Unerwarteter Fehler, siehe Home-Assistant-Log."
+    },
+    "abort": {
+      "already_configured": "WhatsApp ist bereits eingerichtet.",
+      "reauth_successful": "Zugangstoken aktualisiert."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "initializing": "Startet",
+          "qr": "Wartet auf QR-Scan",
+          "authenticated": "Verknüpft, synchronisiert",
+          "ready": "Bereit",
+          "unresponsive": "Reagiert nicht",
+          "disconnected": "Getrennt",
+          "auth_failure": "Sitzung abgelehnt",
+          "bridge_offline": "Bridge nicht erreichbar"
+        }
+      }
+    },
+    "binary_sensor": {
+      "connected": {
+        "name": "Verbunden"
+      }
+    },
+    "image": {
+      "qr_code": {
+        "name": "QR-Code"
+      }
+    },
+    "button": {
+      "restart": {
+        "name": "WhatsApp Web neu starten"
+      },
+      "logout": {
+        "name": "Abmelden (Gerät entkoppeln)"
+      }
+    }
+  },
+  "triggers": {
+    "_": {
+      "name": "WhatsApp-Nachricht empfangen",
+      "description": "Löst aus, wenn eine WhatsApp-Nachricht eingeht.",
+      "fields": {
+        "from_number": {
+          "name": "Von Nummer",
+          "description": "Telefonnummer des Absenders, international ohne '+'."
+        },
+        "from_group": {
+          "name": "Aus Gruppe",
+          "description": "Gruppenname (Groß-/Kleinschreibung egal)."
+        },
+        "from_group_id": {
+          "name": "Aus Gruppen-ID",
+          "description": "Gruppen-ID, mit oder ohne '@g.us'."
+        },
+        "contains_text": {
+          "name": "Enthält Text",
+          "description": "Nachricht enthält diesen Text (Groß-/Kleinschreibung egal)."
+        },
+        "equals_text": {
+          "name": "Entspricht Text",
+          "description": "Nachricht entspricht diesem Text (Groß-/Kleinschreibung und Leerzeichen am Rand egal)."
+        }
+      }
+    }
+  }
+}

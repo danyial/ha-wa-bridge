@@ -1,5 +1,5 @@
 name: "WhatsApp Bridge"
-version: "3.0.0-dev.3"
+version: "3.0.0-dev.4"
 slug: "ha_wa_bridge"
 description: "WhatsApp Web Bridge for Home Assistant"
 url: "https://github.com/danyial/ha-wa-bridge"
@@ -25,6 +25,7 @@ schema:
   allowed_numbers: [str]
   wa_web_version: "str?"
   auth_token: "password?"
+  restart_unresponsive_minutes: "int(0,)?"
 ports:
   # Not published on the host by default: Home Assistant reaches the bridge on
   # the internal add-on network. Set a host port only for external clients.

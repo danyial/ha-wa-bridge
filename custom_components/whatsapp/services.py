@@ -97,7 +97,7 @@ SET_GROUP_PICTURE_SCHEMA = vol.All(
 def _bridge(hass: HomeAssistant) -> WhatsAppBridge:
     for entry in hass.config_entries.async_entries(DOMAIN):
         if entry.state is ConfigEntryState.LOADED:
-            return entry.runtime_data
+            return entry.runtime_data.bridge
     raise ServiceValidationError("The WhatsApp integration is not loaded")
 
 

@@ -88,8 +88,8 @@ async def test_bridge_frames_fire_events(
 async def test_hello_is_stored(
     hass: HomeAssistant, setup_entry: MockConfigEntry
 ) -> None:
-    await _wait_for(hass, lambda: setup_entry.runtime_data.hello is not None)
-    assert setup_entry.runtime_data.hello["protocol"] == 2
+    await _wait_for(hass, lambda: setup_entry.runtime_data.bridge.hello is not None)
+    assert setup_entry.runtime_data.bridge.hello["protocol"] == 2
 
 
 async def test_qr_notification_created_and_dismissed(
@@ -159,7 +159,7 @@ async def test_not_connected_raises(
     hass: HomeAssistant, setup_entry: MockConfigEntry, bridge: FakeBridge
 ) -> None:
     await bridge.close_clients()
-    await _wait_for(hass, lambda: not setup_entry.runtime_data.connected)
+    await _wait_for(hass, lambda: not setup_entry.runtime_data.bridge.connected)
     with pytest.raises(HomeAssistantError, match="Not connected"):
         await _call(hass, "send_message", {"number": "49", "message": "hi"})
 
@@ -172,8 +172,10 @@ async def test_reconnects(
 ) -> None:
     monkeypatch.setattr(client_module, "BACKOFF_MIN", 0.01)
     await bridge.close_clients()
-    await _wait_for(hass, lambda: not setup_entry.runtime_data.connected)
-    await _wait_for(hass, lambda: setup_entry.runtime_data.connected, attempts=200)
+    await _wait_for(hass, lambda: not setup_entry.runtime_data.bridge.connected)
+    await _wait_for(
+        hass, lambda: setup_entry.runtime_data.bridge.connected, attempts=200
+    )
 
 
 async def test_service_schema(

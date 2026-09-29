@@ -122,4 +122,5 @@ async def test_reauth(hass: HomeAssistant, bridge: FakeBridge) -> None:
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_TOKEN] == TOKEN
+    await hass.async_block_till_done()  # reload after reauth
     await hass.config_entries.async_unload(entry.entry_id)

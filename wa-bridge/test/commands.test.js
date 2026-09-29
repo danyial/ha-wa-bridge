@@ -25,7 +25,7 @@ function group(id, name) {
     return { isGroup: true, name, id: { _serialized: id } };
 }
 
-function setup({ ready = true, chats = [] } = {}) {
+function setup({ ready = true, chats = [], actions = {} } = {}) {
     const sent = [];
     const client = {
         getChats: async () => chats,
@@ -40,6 +40,7 @@ function setup({ ready = true, chats = [] } = {}) {
         client,
         wwebjs: { MessageMedia, Poll, ScheduledEvent },
         isReady: () => ready,
+        actions,
         log: { log() {} },
     });
     return { handle: (cmd) => handle(cmd, (f) => replies.push(f)), sent, replies };
@@ -156,4 +157,23 @@ test('set_group_subject: success, rejection, not a group', async () => {
         replies.map((r) => r.success),
         [true, false, false],
     );
+});
+
+test('get_status, restart and logout use the bridge actions', async () => {
+    const calls = [];
+    const { handle } = setup({
+        ready: false,
+        actions: {
+            status: () => ({ status: 'qr' }),
+            restart: () => calls.push('restart'),
+            logout: async () => {
+                throw new Error('not linked');
+            },
+        },
+    });
+    assert.deepEqual(await handle({ type: 'get_status' }), { status: 'qr' });
+    assert.deepEqual(await handle({ type: 'restart' }), { restarting: true });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(calls, ['restart']);
+    await rejectsWith(handle({ type: 'logout' }), 'not_linked');
 });

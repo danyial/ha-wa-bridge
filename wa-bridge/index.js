@@ -5,6 +5,7 @@ const { loadOrCreateToken } = require('./lib/auth');
 const { createBridgeServer, PROTOCOL_VERSION } = require('./lib/server');
 const { createCommandHandler } = require('./lib/commands');
 const { announce } = require('./lib/discovery');
+const { createStatusTracker, createHealthMonitor } = require('./lib/status');
 
 const BRIDGE_VERSION = require('./package.json').version;
 const WWEBJS_VERSION = require('whatsapp-web.js/package.json').version;
@@ -13,6 +14,7 @@ const DATA_PATH = process.env.WA_DATA_PATH || './.wwebjs_auth';
 const {
     authToken,
     port,
+    restartUnresponsiveMinutes,
     waWebVersion,
     detectOwnMessages,
     incomingMode,
@@ -72,23 +74,65 @@ const client = new Client({
 });
 
 let lastQr = null;
-let isReady = false;
 let shuttingDown = false;
+let restarting = false;
+let unresponsiveTimer = null;
 
 const { token, source: tokenSource } = loadOrCreateToken({ configured: authToken, dir: DATA_PATH });
 console.log(`Auth token: ${tokenSource === 'configured' ? 'from configuration' : `stored in ${DATA_PATH}/auth_token`}`);
 
+// Declared before the tracker, which broadcasts through it.
+let broadcast = () => {};
+const status = createStatusTracker({ emit: (frame) => broadcast(frame) });
+
+// Engine probe: browser and page alive, and the WhatsApp socket state
+// readable within the timeout. A hung page never answers the evaluate.
+const health = createHealthMonitor({
+    probe: async () => {
+        if (!client.pupBrowser?.isConnected()) throw new Error('browser disconnected');
+        if (!client.pupPage || client.pupPage.isClosed()) throw new Error('page closed');
+        return client.getState();
+    },
+    onState: (waState) => {
+        if (status.status === 'ready') status.set('ready', { wa_state: waState });
+    },
+    onUnresponsive: (err) => {
+        console.warn(`WhatsApp Web reports ready but does not answer (${err.message}); restart the add-on if this persists`);
+        status.set('unresponsive', { reason: err.message });
+        if (restartUnresponsiveMinutes > 0) {
+            unresponsiveTimer = setTimeout(() => {
+                if (status.status === 'unresponsive') restartClient('unresponsive');
+            }, restartUnresponsiveMinutes * 60 * 1000);
+        }
+    },
+    onRecovered: (waState) => {
+        console.log('WhatsApp Web answers again');
+        clearTimeout(unresponsiveTimer);
+        status.set('ready', { wa_state: waState, reason: null });
+    },
+});
 const handleCommand = createCommandHandler({
     client,
     wwebjs: { MessageMedia, Poll, ScheduledEvent },
-    isReady: () => isReady,
+    isReady: () => status.status === 'ready',
+    actions: {
+        status: () => status.snapshot(),
+        restart: () => restartClient('requested'),
+        logout: async () => {
+            if (!['ready', 'unresponsive', 'authenticated'].includes(status.status)) {
+                throw new Error('not linked');
+            }
+            console.warn('Logging out and unlinking this device (requested)');
+            restarting = true;
+            try {
+                await client.logout();
+            } finally {
+                restarting = false;
+            }
+            await restartClient('logged out');
+        },
+    },
 });
-
-function currentStatus() {
-    if (isReady) return { type: 'status', status: 'ready' };
-    if (lastQr) return { type: 'qr', data: lastQr };
-    return { type: 'status', status: 'initializing' };
-}
 
 const bridge = createBridgeServer({
     port,
@@ -100,16 +144,36 @@ const bridge = createBridgeServer({
             bridge_version: BRIDGE_VERSION,
             wwebjs_version: WWEBJS_VERSION,
         });
-        send(currentStatus());
+        send({ type: 'status', ...status.snapshot() });
+        if (status.status === 'qr' && lastQr) send({ type: 'qr', data: lastQr });
     },
     onCommand: handleCommand,
 });
-const broadcast = bridge.broadcast;
+broadcast = bridge.broadcast;
+
+// Close the browser and initialize again (new QR if the session is gone).
+async function restartClient(reason) {
+    if (restarting || shuttingDown) return;
+    restarting = true;
+    console.log(`Restarting WhatsApp client (${reason})`);
+    health.stop();
+    clearTimeout(unresponsiveTimer);
+    lastQr = null;
+    status.set('initializing', { reason, phone: status.snapshot().phone ?? null });
+    try {
+        await client.destroy();
+    } catch (err) {
+        console.error('Error closing the browser:', err.message);
+    }
+    restarting = false;
+    await startClient();
+}
 
 // WhatsApp Client Events
 client.on('qr', (qr) => {
     console.log('QR Code received');
     lastQr = qr;
+    status.set('qr', { reason: null });
     // Generate terminal QR for local debugging logs
     qrcode.toString(qr, { type: 'terminal', small: true }, function (err, url) {
         if (!err) console.log(url);
@@ -120,34 +184,30 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
     console.log('WhatsApp Client is ready!');
-    isReady = true;
     lastQr = null;
-    broadcast({ type: 'status', status: 'ready' });
+    status.set('ready', { phone: client.info?.wid?.user ?? null, reason: null });
+    health.start();
 });
 
 client.on('authenticated', () => {
     console.log('Authenticated');
-    broadcast({ type: 'status', status: 'authenticated' });
+    lastQr = null;
+    status.set('authenticated', { reason: null });
 });
 
 client.on('auth_failure', msg => {
     console.error('AUTHENTICATION FAILURE', msg);
-    broadcast({ type: 'status', status: 'auth_failure' });
+    status.set('auth_failure', { reason: String(msg) });
 });
 
 // Logged out on the phone, or the session was lost: report it and start over,
 // which shows a new QR code. Without this the bridge kept reporting "ready".
 client.on('disconnected', async (reason) => {
+    if (restarting) return;
     console.warn('WhatsApp disconnected:', reason);
-    isReady = false;
-    lastQr = null;
-    broadcast({ type: 'status', status: 'disconnected', reason: String(reason) });
-    try {
-        await client.destroy();
-    } catch (err) {
-        console.error('Error closing the browser:', err.message);
-    }
-    await startClient();
+    health.stop();
+    status.set('disconnected', { reason: String(reason), phone: null, wa_state: null });
+    await restartClient(`disconnected: ${reason}`);
 });
 
 client.on('vote_update', async vote => {
@@ -336,6 +396,7 @@ async function shutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`${signal} received, shutting down`);
+    health.stop();
     const force = setTimeout(() => process.exit(0), 8000);
     force.unref();
     try {

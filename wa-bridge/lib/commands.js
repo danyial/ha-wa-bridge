@@ -6,7 +6,7 @@ const { CommandError } = require('./server');
 // the server turns that into a `result` frame. `reply` sends extra frames to
 // the requesting client only (the pre-2.x *_response frames, kept for older
 // integrations).
-function createCommandHandler({ client, wwebjs, isReady, log = console }) {
+function createCommandHandler({ client, wwebjs, isReady, actions = {}, log = console }) {
     const { MessageMedia, Poll, ScheduledEvent } = wwebjs;
 
     function requireReady() {
@@ -75,6 +75,25 @@ function createCommandHandler({ client, wwebjs, isReady, log = console }) {
     const handlers = {
         async ping() {
             return { pong: true };
+        },
+
+        async get_status() {
+            return actions.status();
+        },
+
+        async restart() {
+            // Answer first; the restart takes the browser down for a while.
+            setImmediate(() => actions.restart());
+            return { restarting: true };
+        },
+
+        async logout() {
+            try {
+                await actions.logout();
+            } catch (err) {
+                throw new CommandError('not_linked', err.message);
+            }
+            return { logged_out: true };
         },
 
         async send_message(cmd) {

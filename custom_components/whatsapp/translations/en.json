@@ -58,5 +58,40 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "initializing": "Starting",
+          "qr": "Waiting for QR scan",
+          "authenticated": "Linked, syncing",
+          "ready": "Ready",
+          "unresponsive": "Not responding",
+          "disconnected": "Disconnected",
+          "auth_failure": "Session rejected",
+          "bridge_offline": "Bridge offline"
+        }
+      }
+    },
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      }
+    },
+    "image": {
+      "qr_code": {
+        "name": "QR code"
+      }
+    },
+    "button": {
+      "restart": {
+        "name": "Restart WhatsApp Web"
+      },
+      "logout": {
+        "name": "Log out (unlink device)"
+      }
+    }
   }
 }

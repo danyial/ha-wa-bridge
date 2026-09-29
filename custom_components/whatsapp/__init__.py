@@ -8,12 +8,13 @@ import logging
 from typing import Any
 
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
 from .client import WhatsAppBridge
 from .const import (
@@ -23,15 +24,19 @@ from .const import (
     EVENT_MESSAGE_RECEIVED,
     EVENT_POLL_VOTE_RECEIVED,
 )
+from .runtime import WhatsAppConfigEntry, WhatsAppData, signal_update
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = []
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.IMAGE,
+    Platform.SENSOR,
+]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-type WhatsAppConfigEntry = ConfigEntry[WhatsAppBridge]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -40,13 +45,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-def _qr_png_base64(data: str) -> str:
+def _qr_png(data: str) -> bytes:
     """Render the pairing QR code (CPU work, run in the executor)."""
     import qrcode  # heavy (Pillow), only needed while pairing
 
     buffer = io.BytesIO()
     qrcode.make(data).save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
+    return buffer.getvalue()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> bool:
@@ -62,25 +67,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> 
 
     notification_id = f"whatsapp_qr_{entry.entry_id}"
 
+    @callback
+    def updated() -> None:
+        async_dispatcher_send(hass, signal_update(entry))
+
     async def on_frame(frame: dict[str, Any]) -> None:
+        data = entry.runtime_data
         frame_type = frame.get("type")
         if frame_type == "message":
             hass.bus.async_fire(EVENT_MESSAGE_RECEIVED, frame.get("data", {}))
         elif frame_type == "poll_vote":
             hass.bus.async_fire(EVENT_POLL_VOTE_RECEIVED, frame.get("data", {}))
         elif frame_type == "qr":
-            png = await hass.async_add_executor_job(_qr_png_base64, frame["data"])
+            data.qr_png = await hass.async_add_executor_job(_qr_png, frame["data"])
+            data.qr_updated = dt_util.utcnow()
+            png = base64.b64encode(data.qr_png).decode()
             persistent_notification.async_create(
                 hass,
                 "Scan this QR code with WhatsApp (Settings → Linked devices) "
-                f"to link your account.\n\n![QR Code](data:image/png;base64,{png})",
+                "to link your account. It is also shown by the QR code entity."
+                f"\n\n![QR Code](data:image/png;base64,{png})",
                 "WhatsApp: link your account",
                 notification_id,
             )
+            updated()
         elif frame_type == "status":
-            _LOGGER.info("WhatsApp bridge status: %s", frame.get("status"))
-            if frame.get("status") in ("authenticated", "ready"):
+            previous = data.status.get("status")
+            data.status = {k: v for k, v in frame.items() if k != "type"}
+            status = data.status.get("status")
+            if status != previous:
+                _LOGGER.info("WhatsApp bridge status: %s", status)
+            if status != "qr":
+                data.qr_png = None
                 persistent_notification.async_dismiss(hass, notification_id)
+            updated()
+        elif frame_type == "hello":
+            updated()
 
     bridge = WhatsAppBridge(
         hass,
@@ -88,13 +110,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> 
         token,
         on_frame,
         on_auth_failed=lambda: entry.async_start_reauth(hass),
+        on_connection=lambda connected: updated(),
     )
-    entry.runtime_data = bridge
+    entry.runtime_data = WhatsAppData(bridge=bridge)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_create_background_task(hass, bridge.run(), "whatsapp_bridge")
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> bool:
     """Unload a config entry."""
-    await entry.runtime_data.stop()
-    return True
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await entry.runtime_data.bridge.stop()
+    return unloaded

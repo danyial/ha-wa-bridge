@@ -357,6 +357,8 @@ docker-compose up -d
 ### Add-on Configuration
 
 - **`auth_token`** *(optional)*: Access token the bridge requires. Leave empty to use the generated one.
+
+- **`restart_unresponsive_minutes`** *(optional)*: Restart WhatsApp Web after it has been unresponsive for this many minutes. Empty or `0`: only report it.
 If you are using the Home Assistant Add-on, you can configure the following options in the add-on configuration tab:
 
 - **`detect_own_messages`**: Set to `true` to forward messages sent by your own account (e.g., from WhatsApp Web or your phone). Works for group messages only. Default: `false`.
@@ -414,6 +416,32 @@ All options are also available as environment variables:
 Then check your **notifications** (bell icon) for the QR code and scan it with WhatsApp on your phone (*Settings → Linked devices*).
 
 **Upgrading from 2.x:** the bridge now requires a token. After updating add-on and integration, Home Assistant asks you to re-authenticate the integration; with the add-on, restarting it is enough (discovery supplies the token).
+
+### Entities
+
+The integration adds a **WhatsApp** device:
+
+| Entity | Meaning |
+|---|---|
+| `sensor.whatsapp_status` | `initializing`, `qr` (waiting for scan), `authenticated` (syncing), `ready`, `unresponsive`, `disconnected`, `auth_failure`, `bridge_offline` (add-on not reachable). Attributes: linked `phone`, WhatsApp socket state `wa_state`, `reason`, bridge and whatsapp-web.js versions. |
+| `binary_sensor.whatsapp_connected` | On when messages can be sent (`ready`). |
+| `image.whatsapp_qr_code` | The QR code to link your account; available only while waiting for a scan. |
+| `button.whatsapp_restart_whatsapp_web` | Restarts WhatsApp Web in the add-on (keeps the link). |
+| `button.whatsapp_log_out_unlink_device` | Logs out and unlinks this device in WhatsApp; a new QR scan is needed. **Disabled by default.** |
+
+**Unresponsive detection.** whatsapp-web.js can keep reporting "ready" while WhatsApp Web has hung. While ready, the bridge probes the page every 30 s (browser alive, WhatsApp socket state readable within 10 s); two failed probes in a row switch the status to `unresponsive` and log a warning. The add-on option `restart_unresponsive_minutes` restarts WhatsApp Web automatically after that many minutes (default: off). Example alert:
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.whatsapp_connected
+    to: "off"
+    for: "00:10:00"
+actions:
+  - action: persistent_notification.create
+    data:
+      message: "WhatsApp: {{ states('sensor.whatsapp_status') }}"
+```
 
 ### Service responses
 
