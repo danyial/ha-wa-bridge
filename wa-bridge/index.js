@@ -1,45 +1,17 @@
 const { Client, LocalAuth, MessageMedia, Poll, ScheduledEvent } = require('whatsapp-web.js');
 const { WebSocketServer } = require('ws');
 const qrcode = require('qrcode');
-const fs = require('fs');
+const { readOptions, loadConfig } = require('./lib/config');
 
-let configOptions = {};
-try {
-    if (fs.existsSync('/data/options.json')) {
-        configOptions = JSON.parse(fs.readFileSync('/data/options.json', 'utf8'));
-    }
-} catch (err) {
-    console.error('Error reading options.json:', err);
-}
-
-const detectOwnMessages = configOptions.detect_own_messages || process.env.DETECT_OWN_MESSAGES === 'true' || false;
-
-// Incoming message filtering
-// Mode: 'all' (default) | 'disabled' | 'groups_only'
-const incomingMode = configOptions.incoming_messages_mode || process.env.INCOMING_MESSAGES_MODE || 'all';
-
-// Optional list of group names to forward (applies to groups_only mode and as a filter in 'all' mode).
-// If empty, no group-name filtering is applied.
-let allowedGroups = configOptions.allowed_groups || process.env.ALLOWED_GROUPS || [];
-if (typeof allowedGroups === 'string') {
-    // Support comma-separated env var: ALLOWED_GROUPS="Group A,Group B"
-    allowedGroups = allowedGroups.split(',').map(g => g.trim()).filter(Boolean);
-}
-const allowedGroupsLower = allowedGroups.map(g => g.toLowerCase());
-
-// Optional list of phone numbers to forward (applies to numbers_only mode and as a filter in 'all' mode).
-// Numbers should be in international format without the '+': e.g. "40741234567"
-// If empty, no number filtering is applied.
-let allowedNumbers = configOptions.allowed_numbers || process.env.ALLOWED_NUMBERS || [];
-if (typeof allowedNumbers === 'string') {
-    // Support comma-separated env var: ALLOWED_NUMBERS="40741234567,49123456789"
-    allowedNumbers = allowedNumbers.split(',').map(n => n.trim()).filter(Boolean);
-}
-const allowedNumbersSet = new Set(allowedNumbers.map(n => `${n}@c.us`));
-
-// Incoming message logging level
-// Mode: 'FULL' (default) | 'COMPACT' | 'NONE'
-const incomingLogLevel = (configOptions.incoming_message_log_level || process.env.INCOMING_MESSAGE_LOG_LEVEL || 'FULL').toUpperCase();
+const {
+    detectOwnMessages,
+    incomingMode,
+    allowedGroups,
+    allowedGroupsLower,
+    allowedNumbers,
+    allowedNumbersSet,
+    incomingLogLevel,
+} = loadConfig(readOptions());
 
 console.log(`Incoming messages mode: ${incomingMode}`);
 console.log(`Incoming message log level: ${incomingLogLevel}`);
