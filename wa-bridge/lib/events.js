@@ -9,6 +9,7 @@ const { bareId, serialize, isGroup, isLid } = require('./ids');
 //   sender_phone  sender's number …@c.us, also for LID senders; null if unknown
 //   sender_lid    sender's LID if WhatsApp sent one
 //   is_group
+//   to_self       own message to your own chat ("notes to self")
 function createEventBuilder({ client, resolver, me, log = console }) {
     async function chatName(chatId, getChat) {
         try {
@@ -29,6 +30,7 @@ function createEventBuilder({ client, resolver, me, log = console }) {
         const sender = bareId(msg.fromMe ? me().phone : msg.author || msg.from);
         const senderPhone = sender ? await resolver.phoneOf(sender) : null;
         const name = await chatName(chatId, () => msg.getChat());
+        const toSelf = msg.fromMe && !group ? await isOwnChat(from, to) : false;
         return {
             from: msg.from,
             to: msg.to,
@@ -47,7 +49,21 @@ function createEventBuilder({ client, resolver, me, log = console }) {
             sender_phone: senderPhone,
             sender_lid: isLid(sender) ? sender : null,
             is_group: group,
+            to_self: toSelf,
         };
+    }
+
+    // Seen live: a note to yourself has from = <own number>@c.us and
+    // to = <own LID>@lid. Also accept to == from, to == own number, or a LID
+    // that resolves to the own number.
+    async function isOwnChat(from, to) {
+        const own = me();
+        if (!to) return false;
+        if (to === from) return true;
+        if (own.phone && to === own.phone) return true;
+        if (own.lid && to === own.lid) return true;
+        if (isLid(to) && own.phone) return (await resolver.phoneOf(to)) === own.phone;
+        return false;
     }
 
     async function vote(pollVote) {
