@@ -49,9 +49,15 @@ function loadConfig(options = {}, env = process.env) {
     const authToken = (options.auth_token || env.AUTH_TOKEN || '').trim();
     const port = Number(env.PORT || 3000);
 
+    // Restart the WhatsApp client after this many minutes unresponsive; 0 = off.
+    const restartUnresponsiveMinutes = Number(
+        options.restart_unresponsive_minutes ?? env.RESTART_UNRESPONSIVE_MINUTES ?? 0,
+    ) || 0;
+
     return {
         authToken,
         port,
+        restartUnresponsiveMinutes,
         waWebVersion,
         detectOwnMessages,
         incomingMode,
