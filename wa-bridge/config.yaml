@@ -8,11 +8,13 @@ arch:
   - amd64
 image: "ghcr.io/danyial/ha-wa-bridge"
 startup: application
+discovery:
+  - whatsapp
 boot: auto
 options:
   detect_own_messages: false
   incoming_messages_mode: "all"
-  incoming_message_log_level: "FULL"
+  incoming_message_log_level: "COMPACT"
   allowed_groups: []
   allowed_numbers: []
 schema:
@@ -22,5 +24,8 @@ schema:
   allowed_groups: [str]
   allowed_numbers: [str]
   wa_web_version: "str?"
+  auth_token: "password?"
 ports:
-  3000/tcp: 3000
+  # Not published on the host by default: Home Assistant reaches the bridge on
+  # the internal add-on network. Set a host port only for external clients.
+  3000/tcp: null

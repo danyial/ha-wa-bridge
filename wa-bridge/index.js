@@ -1,9 +1,18 @@
 const { Client, LocalAuth, MessageMedia, Poll, ScheduledEvent } = require('whatsapp-web.js');
-const { WebSocketServer } = require('ws');
 const qrcode = require('qrcode');
 const { readOptions, loadConfig, webVersionOptions } = require('./lib/config');
+const { loadOrCreateToken } = require('./lib/auth');
+const { createBridgeServer, PROTOCOL_VERSION } = require('./lib/server');
+const { createCommandHandler } = require('./lib/commands');
+const { announce } = require('./lib/discovery');
+
+const BRIDGE_VERSION = require('./package.json').version;
+const WWEBJS_VERSION = require('whatsapp-web.js/package.json').version;
+const DATA_PATH = process.env.WA_DATA_PATH || './.wwebjs_auth';
 
 const {
+    authToken,
+    port,
     waWebVersion,
     detectOwnMessages,
     incomingMode,
@@ -38,17 +47,10 @@ function logIncomingData(type, data, rawObj) {
     }
 }
 
-const PORT = 3000;
-
-// Initialize WebSocket Server
-const wss = new WebSocketServer({ port: PORT });
-
-console.log(`WebSocket server started on port ${PORT}`);
-
 // Initialize WhatsApp Client
 const client = new Client({
     authStrategy: new LocalAuth({
-        dataPath: process.env.WA_DATA_PATH || './.wwebjs_auth'
+        dataPath: DATA_PATH
     }),
     ...webVersionOptions({ waWebVersion }),
     puppeteer: {
@@ -63,8 +65,6 @@ const client = new Client({
             '--disable-gpu',
             '--disable-extensions',
             '--disable-software-rasterizer',
-            '--disable-web-security',
-            '--ignore-certificate-errors'
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     },
@@ -73,239 +73,38 @@ const client = new Client({
 
 let lastQr = null;
 let isReady = false;
+let shuttingDown = false;
 
-// WebSocket Connection Handler
-wss.on('connection', (ws) => {
-    console.log('New client connected');
+const { token, source: tokenSource } = loadOrCreateToken({ configured: authToken, dir: DATA_PATH });
+console.log(`Auth token: ${tokenSource === 'configured' ? 'from configuration' : `stored in ${DATA_PATH}/auth_token`}`);
 
-    // Send current state to new client
-    if (isReady) {
-        ws.send(JSON.stringify({ type: 'status', status: 'ready' }));
-    } else if (lastQr) {
-        ws.send(JSON.stringify({ type: 'qr', data: lastQr }));
-    } else {
-        ws.send(JSON.stringify({ type: 'status', status: 'initializing' }));
-    }
-
-    // Handle incoming messages from HA
-    ws.on('message', async (message) => {
-        try {
-            const data = JSON.parse(message);
-            console.log('Received command:', data);
-
-            if (data.type === 'send_message') {
-                const { number, message: text, group_name, group_id, media } = data;
-                await handleSendMessage(number, text, group_name, group_id, media);
-            } else if (data.type === 'send_poll') {
-                const { number, group_name, group_id, message: pollQuestion, options, allow_multiple_answers } = data;
-                await handleSendPoll(number, group_name, group_id, pollQuestion, options, allow_multiple_answers);
-            } else if (data.type === 'broadcast') {
-                const { targets, message: text, media } = data;
-                if (Array.isArray(targets) && targets.length > 0) {
-                   console.log(`Broadcasting message to ${targets.length} targets.`);
-                   for (const target of targets) {
-                       await handleSendMessage(target, text, target, null, media);
-                   }
-                } else {
-                    console.error('No targets provided for broadcast.');
-                }
-            } else if (data.type === 'get_groups') {
-                await handleGetGroups(ws);
-            } else if (data.type === 'set_group_subject') {
-                const { group_id, subject } = data;
-                await handleSetGroupSubject(ws, group_id, subject);
-            } else if (data.type === 'set_group_picture') {
-                const { group_id, media } = data;
-                await handleSetGroupPicture(ws, group_id, media);
-            } else if (data.type === 'send_event') {
-                const { number, group_name, group_id, name, description, location, start_time, end_time, call_type } = data;
-                await handleSendEvent(number, group_name, group_id, name, description, location, start_time, end_time, call_type);
-            }
-        } catch (error) {
-            console.error('Error processing message:', error);
-        }
-    });
+const handleCommand = createCommandHandler({
+    client,
+    wwebjs: { MessageMedia, Poll, ScheduledEvent },
+    isReady: () => isReady,
 });
 
-async function resolveChatId(number, group_name, group_id) {
-    let chatId = number;
-
-    // If a group_id is provided, use it directly (most stable identifier)
-    if (group_id) {
-        chatId = group_id;
-        if (!chatId.includes('@')) {
-            chatId = `${chatId}@g.us`;
-        }
-        console.log(`Using group ID directly: ${chatId}`);
-        return chatId;
-    }
-
-    if (group_name) {
-        // optimistically try to find a group first if group_name is provided
-        try {
-            const chats = await client.getChats();
-            const group = chats.find(chat => chat.isGroup && chat.name.toLowerCase() === group_name.toLowerCase());
-
-            if (group) {
-                chatId = group.id._serialized;
-                console.log(`Found group '${group.name}' with ID: ${chatId}`);
-            }
-        } catch (err) {
-            console.error('Error fetching chats:', err);
-        }
-    }
-
-    // Check if chatId is a valid JID (contains @)
-    if (chatId && !chatId.includes('@')) {
-         // Basic format check for number (e.g. 1234567890@c.us)
-        chatId = `${chatId}@c.us`;
-    }
-
-    return chatId;
+function currentStatus() {
+    if (isReady) return { type: 'status', status: 'ready' };
+    if (lastQr) return { type: 'qr', data: lastQr };
+    return { type: 'status', status: 'initializing' };
 }
 
-async function handleSendMessage(number, text, group_name, group_id, media) {
-    const chatId = await resolveChatId(number, group_name, group_id);
-
-    if (chatId) {
-        try {
-            if (media) {
-                const messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
-                await client.sendMessage(chatId, messageMedia, { caption: text });
-                console.log(`Sent media message to ${chatId}: ${text || '(no caption)'}`);
-            } else {
-                await client.sendMessage(chatId, text);
-                console.log(`Sent message to ${chatId}: ${text}`);
-            }
-        } catch (sendErr) {
-            console.error(`Failed to send message to ${chatId}:`, sendErr);
-        }
-    } else {
-         console.error('No valid destination (number or group_name) provided.');
-    }
-}
-
-async function handleSendPoll(number, group_name, group_id, pollQuestion, options, allow_multiple_answers) {
-    const chatId = await resolveChatId(number, group_name, group_id);
-
-    if (chatId) {
-        try {
-            const poll = new Poll(pollQuestion, options, { allowMultipleAnswers: allow_multiple_answers });
-            await client.sendMessage(chatId, poll);
-            console.log(`Sent poll to ${chatId}: ${pollQuestion}`);
-        } catch (sendErr) {
-            console.error(`Failed to send poll to ${chatId}:`, sendErr);
-        }
-    } else {
-         console.error('No valid destination (number or group_name) provided for poll.');
-    }
-}
-
-async function handleSendEvent(number, group_name, group_id, eventName, eventDescription, eventLocation, eventStartTime, eventEndTime, eventCallType) {
-    const chatId = await resolveChatId(number, group_name, group_id);
-
-    if (chatId) {
-        try {
-            const options = {
-                callType: eventCallType || 'none'
-            };
-            if (eventDescription) options.description = eventDescription;
-            if (eventLocation) options.location = eventLocation;
-            if (eventEndTime) options.endTime = new Date(eventEndTime);
-
-            const event = new ScheduledEvent(eventName, new Date(eventStartTime), options);
-            await client.sendMessage(chatId, event);
-            console.log(`Sent event to ${chatId}: ${eventName}`);
-        } catch (sendErr) {
-            console.error(`Failed to send event to ${chatId}:`, sendErr);
-        }
-    } else {
-        console.error('No valid destination (number or group_name) provided for event.');
-    }
-}
-
-async function handleGetGroups(ws) {
-    try {
-        const chats = await client.getChats();
-        const groups = chats
-            .filter(chat => chat.isGroup)
-            .map(chat => ({
-                id: chat.id._serialized,
-                name: chat.name
-            }));
-        console.log(`Returning ${groups.length} groups.`);
-        ws.send(JSON.stringify({ type: 'get_groups_response', data: groups }));
-    } catch (err) {
-        console.error('Error fetching groups:', err);
-        ws.send(JSON.stringify({ type: 'get_groups_response', data: [], error: err.message }));
-    }
-}
-
-async function handleSetGroupSubject(ws, group_id, subject) {
-    if (!group_id || !subject) {
-        console.error('group_id and subject are required for set_group_subject.');
-        ws.send(JSON.stringify({ type: 'set_group_subject_response', success: false, error: 'group_id and subject are required' }));
-        return;
-    }
-
-    let chatId = group_id;
-    if (!chatId.includes('@')) {
-        chatId = `${chatId}@g.us`;
-    }
-
-    try {
-        const chat = await client.getChatById(chatId);
-        if (!chat.isGroup) {
-            console.error(`Chat ${chatId} is not a group.`);
-            ws.send(JSON.stringify({ type: 'set_group_subject_response', success: false, error: 'Chat is not a group' }));
-            return;
-        }
-        const result = await chat.setSubject(subject);
-        console.log(`Set group subject for ${chatId} to "${subject}": ${result}`);
-        ws.send(JSON.stringify({ type: 'set_group_subject_response', success: result }));
-    } catch (err) {
-        console.error(`Failed to set group subject for ${chatId}:`, err);
-        ws.send(JSON.stringify({ type: 'set_group_subject_response', success: false, error: err.message }));
-    }
-}
-
-async function handleSetGroupPicture(ws, group_id, media) {
-    if (!group_id || !media) {
-        console.error('group_id and media are required for set_group_picture.');
-        ws.send(JSON.stringify({ type: 'set_group_picture_response', success: false, error: 'group_id and media are required' }));
-        return;
-    }
-
-    let chatId = group_id;
-    if (!chatId.includes('@')) {
-        chatId = `${chatId}@g.us`;
-    }
-
-    try {
-        const chat = await client.getChatById(chatId);
-        if (!chat.isGroup) {
-            console.error(`Chat ${chatId} is not a group.`);
-            ws.send(JSON.stringify({ type: 'set_group_picture_response', success: false, error: 'Chat is not a group' }));
-            return;
-        }
-        const messageMedia = new MessageMedia(media.mimetype, media.data, media.filename);
-        const result = await chat.setPicture(messageMedia);
-        console.log(`Set group picture for ${chatId}: ${result}`);
-        ws.send(JSON.stringify({ type: 'set_group_picture_response', success: result }));
-    } catch (err) {
-        console.error(`Failed to set group picture for ${chatId}:`, err);
-        ws.send(JSON.stringify({ type: 'set_group_picture_response', success: false, error: err.message }));
-    }
-}
-
-// Broadcast helper
-function broadcast(data) {
-    wss.clients.forEach(client => {
-        if (client.readyState === 1) { // OPEN
-            client.send(JSON.stringify(data));
-        }
-    });
-}
+const bridge = createBridgeServer({
+    port,
+    token,
+    onConnection: (send) => {
+        send({
+            type: 'hello',
+            protocol: PROTOCOL_VERSION,
+            bridge_version: BRIDGE_VERSION,
+            wwebjs_version: WWEBJS_VERSION,
+        });
+        send(currentStatus());
+    },
+    onCommand: handleCommand,
+});
+const broadcast = bridge.broadcast;
 
 // WhatsApp Client Events
 client.on('qr', (qr) => {
@@ -334,6 +133,21 @@ client.on('authenticated', () => {
 client.on('auth_failure', msg => {
     console.error('AUTHENTICATION FAILURE', msg);
     broadcast({ type: 'status', status: 'auth_failure' });
+});
+
+// Logged out on the phone, or the session was lost: report it and start over,
+// which shows a new QR code. Without this the bridge kept reporting "ready".
+client.on('disconnected', async (reason) => {
+    console.warn('WhatsApp disconnected:', reason);
+    isReady = false;
+    lastQr = null;
+    broadcast({ type: 'status', status: 'disconnected', reason: String(reason) });
+    try {
+        await client.destroy();
+    } catch (err) {
+        console.error('Error closing the browser:', err.message);
+    }
+    await startClient();
 });
 
 client.on('vote_update', async vote => {
@@ -487,20 +301,63 @@ if (incomingMode !== 'disabled') {
     console.log('Incoming message handling is DISABLED. The bridge will not forward any received messages to Home Assistant.');
 }
 
-// Start the client with retry logic
-const startClient = async () => {
+// Start the client. Failures (Chromium crash, network down at boot) are
+// retried with backoff instead of exiting: the add-on has no watchdog, so an
+// exit would leave WhatsApp down until someone restarts it.
+const RETRY_MIN_MS = 10 * 1000;
+const RETRY_MAX_MS = 5 * 60 * 1000;
+let retryMs = RETRY_MIN_MS;
+
+async function startClient() {
+    if (shuttingDown) return;
     console.log('Initializing WhatsApp client...');
     try {
-        // Small delay to ensure network is stable
-        await new Promise(resolve => setTimeout(resolve, 2000));
         await client.initialize();
+        retryMs = RETRY_MIN_MS;
     } catch (err) {
-        console.error('Failed to initialize client:', err);
-        
-        // Exit to allow Docker/Supervisor to restart the container
-        console.log('Exiting to trigger restart and lock cleanup...');
-        process.exit(1);
+        console.error(`Failed to initialize client, retrying in ${retryMs / 1000}s:`, err.message);
+        try {
+            await client.destroy();
+        } catch {
+            // Browser may not have started at all.
+        }
+        setTimeout(startClient, retryMs);
+        retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
     }
-};
+}
 
-startClient();
+process.on('unhandledRejection', (err) => {
+    console.error('Unhandled rejection:', err);
+});
+
+// The Supervisor sends SIGTERM on stop and kills after a grace period; close
+// Chromium cleanly so its profile locks do not outlive the container.
+async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received, shutting down`);
+    const force = setTimeout(() => process.exit(0), 8000);
+    force.unref();
+    try {
+        await bridge.close();
+        await client.destroy();
+    } catch (err) {
+        console.error('Error during shutdown:', err.message);
+    }
+    process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+async function main() {
+    const listening = await bridge.listen();
+    console.log(`WebSocket server listening on port ${listening} (token required)`);
+    try {
+        await announce({ port: listening, token });
+    } catch (err) {
+        console.error('Discovery failed (set up the integration manually):', err.message);
+    }
+    await startClient();
+}
+
+main();
