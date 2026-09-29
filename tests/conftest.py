@@ -160,6 +160,13 @@ async def setup_entry(
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await bridge.wait_connected()
+    # The client runs as a background task, which async_block_till_done does
+    # not wait for: wait until it has taken over the socket.
+    for _ in range(500):
+        if entry.runtime_data.bridge.connected:
+            break
+        await asyncio.sleep(0.01)
+    assert entry.runtime_data.bridge.connected
     await hass.async_block_till_done()
     yield entry
     await hass.config_entries.async_unload(entry.entry_id)
