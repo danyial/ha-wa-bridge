@@ -12,6 +12,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
@@ -71,13 +72,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> 
     def updated() -> None:
         async_dispatcher_send(hass, signal_update(entry))
 
+    @callback
+    def device_id() -> str | None:
+        device = dr.async_get(hass).async_get_device_by_identifier(
+            (DOMAIN, entry.entry_id), entry.entry_id
+        )
+        return device.id if device else None
+
     async def on_frame(frame: dict[str, Any]) -> None:
         data = entry.runtime_data
         frame_type = frame.get("type")
-        if frame_type == "message":
-            hass.bus.async_fire(EVENT_MESSAGE_RECEIVED, frame.get("data", {}))
-        elif frame_type == "poll_vote":
-            hass.bus.async_fire(EVENT_POLL_VOTE_RECEIVED, frame.get("data", {}))
+        if frame_type in ("message", "poll_vote"):
+            # device_id lets device triggers tell bridges apart.
+            payload = {**frame.get("data", {}), "device_id": device_id()}
+            hass.bus.async_fire(
+                EVENT_MESSAGE_RECEIVED
+                if frame_type == "message"
+                else EVENT_POLL_VOTE_RECEIVED,
+                payload,
+            )
         elif frame_type == "qr":
             data.qr_png = await hass.async_add_executor_job(_qr_png, frame["data"])
             data.qr_updated = dt_util.utcnow()

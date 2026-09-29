@@ -213,6 +213,25 @@ action:
       entity_id: light.living_room
 ```
 
+`from_number` accepts international (`+49 170 1234567`, `0049…`, `49170…`) and national numbers (`0170 1234567`, using the country set in Home Assistant). It matches the person who wrote the message, also inside groups and also when WhatsApp hides the number behind a LID (the bridge resolves it; see *Senders and LIDs*).
+
+The WhatsApp device also offers a device trigger **Message received** with an optional sender filter (*Settings → Automations → Device*).
+
+### Senders and LIDs
+
+WhatsApp increasingly identifies people by a *LID* (`…@lid`) instead of their number. The bridge resolves LIDs to phone numbers where WhatsApp knows them (cached; an unknown LID may cost one lookup at WhatsApp's server) and adds to every `whatsapp_message_received` event:
+
+| Field | Meaning |
+|---|---|
+| `sender` | who wrote it: the group author, the direct sender, or yourself (`…@c.us` or `…@lid`) |
+| `sender_phone` | that person's number `…@c.us`, also for LID senders; `null` if WhatsApp does not reveal it |
+| `sender_lid` | the LID, if WhatsApp sent one |
+| `chat_id` | the chat: group `…@g.us` or the other person |
+| `is_group` | group chat |
+| `device_id` | the WhatsApp device in Home Assistant |
+
+The earlier fields (`from`, `to`, `author`, `body`, `chatName`, `isGroup`, `groupId`, …) are unchanged. In `whatsapp_poll_vote_received`, `voter` is now the voter's phone number (digits) when a LID can be resolved; `voter_id`, `voter_phone` and `chat_id` are new.
+
 ### Group Message Trigger
 To trigger an automation from a group message, use `from_group` with the exact group name:
 
@@ -374,6 +393,8 @@ If you are using the Home Assistant Add-on, you can configure the following opti
   - `FULL` – logs the entire raw message payload, including its text.
   - `NONE` – disables all logging for incoming messages. This is the most private option.
 
+- **Filters combined:** with both `allowed_groups` and `allowed_numbers` set (mode `all`), a message passes if it comes from an allowed group **or** is a direct message from an allowed number. Before 3.0 that combination dropped every message. Filters fail closed: a message whose group name or sender number cannot be determined does not pass a list.
+
 - **`allowed_groups`**: An optional list of group names. When set, **only** messages from groups whose name exactly matches one of the entries are forwarded. Useful if you only care about a single group. Example:
   ```yaml
   allowed_groups:
@@ -382,7 +403,7 @@ If you are using the Home Assistant Add-on, you can configure the following opti
   ```
   Leave empty (default) to apply no group-name filter.
 
-- **`allowed_numbers`**: An optional list of phone numbers (international format, no `+`). When set, **only** messages from those numbers are forwarded. Required when using `numbers_only` mode; also works as an extra filter in `all` mode. Example:
+- **`allowed_numbers`**: An optional list of phone numbers in international format (`+49 170 …` or `49170…`). When set, **only** direct messages from those numbers are forwarded; senders hidden behind a LID match once their number is resolved. Required when using `numbers_only` mode; also works as an extra filter in `all` mode. Example:
   ```yaml
   allowed_numbers:
     - "40741234567"

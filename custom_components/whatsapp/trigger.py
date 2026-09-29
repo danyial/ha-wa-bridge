@@ -6,6 +6,7 @@ from homeassistant.helpers import trigger
 from homeassistant.helpers.typing import ConfigType
 
 from .const import EVENT_MESSAGE_RECEIVED
+from .helpers import normalize_chat_id
 
 TRIGGER_SCHEMA = cv.TRIGGER_BASE_SCHEMA.extend(
     {
@@ -17,6 +18,27 @@ TRIGGER_SCHEMA = cv.TRIGGER_BASE_SCHEMA.extend(
         vol.Optional("equals_text"): cv.string,
     }
 )
+
+
+async def async_validate_trigger_config(
+    hass: HomeAssistant, config: ConfigType
+) -> ConfigType:
+    """Normalize from_number; national numbers use the HA country."""
+    config = TRIGGER_SCHEMA(config)
+    if number := config.get("from_number"):
+        try:
+            config["from_number"] = normalize_chat_id(number, hass.config.country)
+        except ValueError as err:
+            raise vol.Invalid(str(err)) from err
+    return config
+
+
+def _bare(chat_id: object) -> str | None:
+    """Drop a device suffix: '4917…:12@c.us' -> '4917…@c.us'."""
+    if not isinstance(chat_id, str) or "@" not in chat_id:
+        return None
+    user, server = chat_id.split("@", 1)
+    return f"{user.split(':')[0]}@{server}"
 
 
 async def async_attach_trigger(
@@ -58,9 +80,16 @@ async def async_attach_trigger(
             if not group_id:
                 group_id = to
 
-        # Check sender (from_number)
-        if from_number and sender not in (from_number, f"{from_number}@c.us"):
-            return
+        # Check sender (from_number): the resolved number, the sender id
+        # (a LID if WhatsApp hides the number), or the fields of bridges
+        # before 3.0 (group messages carry the person in `author`).
+        if from_number:
+            candidates = {
+                _bare(data.get(key))
+                for key in ("sender_phone", "sender", "author", "from")
+            }
+            if from_number not in candidates:
+                return
 
         # Check group by ID (from_group_id)
         if from_group_id:
@@ -102,6 +131,8 @@ async def async_attach_trigger(
                     "id": config.get("id"),
                     "event": data,
                     "from_number": sender,
+                    "sender": data.get("sender"),
+                    "sender_phone": data.get("sender_phone"),
                     "from_group": chat_name,
                     "from_group_id": group_id,
                     "description": (

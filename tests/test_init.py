@@ -11,6 +11,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
@@ -82,7 +83,10 @@ async def test_bridge_frames_fire_events(
     events = async_capture_events(hass, event_type)
     await bridge.push(frame)
     await _wait_for(hass, lambda: events)
-    assert events[0].data == expected
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, setup_entry.entry_id), setup_entry.entry_id
+    )
+    assert events[0].data == {**expected, "device_id": device.id}
 
 
 async def test_hello_is_stored(
@@ -118,7 +122,7 @@ async def test_send_message_returns_result(
     assert response == {"chat_id": "491700000001@c.us", "message_id": "m1"}
     frame = bridge.received[0]
     assert frame["type"] == "send_message"
-    assert frame["number"] == "491700000001"
+    assert frame["number"] == "491700000001@c.us"
     assert frame["message"] == "hi"
     assert isinstance(frame["id"], int)
 
@@ -333,3 +337,32 @@ async def test_unload(hass: HomeAssistant, setup_entry: MockConfigEntry) -> None
     assert setup_entry.state is ConfigEntryState.NOT_LOADED
     with pytest.raises(ServiceValidationError, match="not loaded"):
         await _call(hass, "send_message", {"number": "49", "message": "hi"})
+
+
+async def test_numbers_are_normalized_with_ha_country(
+    hass: HomeAssistant, setup_entry: MockConfigEntry, bridge: FakeBridge
+) -> None:
+    await hass.config.async_update(country="DE")
+    await _call(hass, "send_message", {"number": "0170 0000001", "message": "a"})
+    await _call(hass, "send_message", {"number": "+49 (0) 170-0000002", "message": "b"})
+    await _call(
+        hass,
+        "send_broadcast",
+        {"targets": ["Familie", "0170 0000003", "123@lid"], "message": "c"},
+    )
+    assert bridge.received[0]["number"] == "491700000001@c.us"
+    assert bridge.received[1]["number"] == "491700000002@c.us"
+    assert bridge.received[2]["targets"] == [
+        "Familie",
+        "491700000003@c.us",
+        "123@lid",
+    ]
+
+
+async def test_national_number_without_country_is_rejected(
+    hass: HomeAssistant, setup_entry: MockConfigEntry, bridge: FakeBridge
+) -> None:
+    await hass.config.async_update(country=None)
+    with pytest.raises(ServiceValidationError, match="country"):
+        await _call(hass, "send_message", {"number": "0170 0000001", "message": "a"})
+    assert bridge.received == []
