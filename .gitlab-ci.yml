@@ -1,0 +1,85 @@
+stages:
+  - lint
+  - test
+  - validate
+  - build
+
+default:
+  tags:
+    - docker
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+.python:
+  image: python:3.14-slim
+  cache:
+    key: pip-$CI_JOB_NAME
+    paths:
+      - .cache/pip
+
+ruff:
+  extends: .python
+  stage: lint
+  script:
+    - pip install -q ruff
+    - ruff check .
+    - ruff format --check .
+
+pytest:
+  extends: .python
+  stage: test
+  script:
+    - pip install -q -r requirements_test.txt
+    - pytest -q -p no:cacheprovider
+
+node-test:
+  stage: test
+  image: node:22-slim
+  script:
+    - cd wa-bridge
+    - node --version
+    - npm test
+
+hassfest:
+  stage: validate
+  image:
+    name: ghcr.io/home-assistant/hassfest
+    entrypoint: [""]
+  script:
+    # The image's entrypoint discovers custom_components/ relative to cwd.
+    - cd "$CI_PROJECT_DIR" && /usr/src/homeassistant/script/hassfest/docker/entrypoint.sh
+
+checks:
+  extends: .python
+  stage: validate
+  script:
+    - pip install -q pyyaml
+    - python scripts/check_hacs.py
+    - python scripts/check_versions.py
+    - python scripts/check_addon.py
+
+# Test build of the add-on image (amd64, no push). Publishing happens on
+# GitHub (mirror) for v* tags. The runner is unprivileged (no user
+# namespaces), so buildah/DinD are out; kaniko builds in userspace.
+# GoogleContainerTools/kaniko is archived; osscontainertools/kaniko is the
+# maintained fork.
+image-build:
+  stage: build
+  image:
+    name: ghcr.io/osscontainertools/kaniko:v1.28.5-alpine
+    entrypoint: [""]
+  rules:
+    # Compare with main, not the previous push, so every branch that touches
+    # the add-on gets a test build.
+    - changes:
+        paths:
+          - wa-bridge/**/*
+          - .gitlab-ci.yml
+        compare_to: refs/heads/main
+  script:
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR/wa-bridge"
+      --dockerfile "$CI_PROJECT_DIR/wa-bridge/Dockerfile"
+      --custom-platform linux/amd64
+      --no-push

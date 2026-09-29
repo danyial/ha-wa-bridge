@@ -1,11 +1,12 @@
 import asyncio
 import json
 import logging
-import aiohttp
 
+import aiohttp
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
+
 
 class WhatsAppBridge:
     def __init__(self, hass: HomeAssistant, host: str):
@@ -18,7 +19,7 @@ class WhatsAppBridge:
 
     async def start(self, event_callback=None):
         self._running = True
-        
+
         while self._running:
             try:
                 if not self._session:
@@ -29,19 +30,21 @@ class WhatsAppBridge:
                     self._ws = ws
                     self.connection_status = "connected"
                     _LOGGER.info("Connected to WhatsApp Bridge")
-                    
+
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             data = json.loads(msg.data)
                             if event_callback:
                                 await event_callback(data)
                         elif msg.type == aiohttp.WSMsgType.ERROR:
-                            _LOGGER.error("WhatsApp Bridge connection error: %s", ws.exception())
+                            _LOGGER.error(
+                                "WhatsApp Bridge connection error: %s", ws.exception()
+                            )
                             break
             except Exception as e:
-                 _LOGGER.error("Error connecting to WhatsApp Bridge: %s", e)
-                 self.connection_status = "error"
-            
+                _LOGGER.error("Error connecting to WhatsApp Bridge: %s", e)
+                self.connection_status = "error"
+
             if self._running:
                 self.connection_status = "reconnecting"
                 _LOGGER.info("Reconnecting in 5 seconds...")
@@ -54,16 +57,20 @@ class WhatsAppBridge:
         if self._session:
             await self._session.close()
 
-    async def send_message(self, number: str | None, message: str, group_name: str | None = None, group_id: str | None = None, media: dict | None = None):
+    async def send_message(
+        self,
+        number: str | None,
+        message: str,
+        group_name: str | None = None,
+        group_id: str | None = None,
+        media: dict | None = None,
+    ):
         """Send a message via the bridge."""
         if not self._ws or self._ws.closed:
             _LOGGER.warning("Bridge not connected, cannot send message")
             return
 
-        payload = {
-            "type": "send_message",
-            "message": message
-        }
+        payload = {"type": "send_message", "message": message}
 
         if number:
             payload["number"] = number
@@ -78,29 +85,35 @@ class WhatsAppBridge:
             payload["media"] = media
 
         if not number and not group_name and not group_id:
-             _LOGGER.error("Neither number, group_name, nor group_id provided")
-             return
+            _LOGGER.error("Neither number, group_name, nor group_id provided")
+            return
 
         await self._ws.send_json(payload)
 
-    async def send_broadcast(self, targets: list[str], message: str, media: dict | None = None):
+    async def send_broadcast(
+        self, targets: list[str], message: str, media: dict | None = None
+    ):
         """Send a broadcast message via the bridge."""
         if not self._ws or self._ws.closed:
             _LOGGER.warning("Bridge not connected, cannot send broadcast")
             return
 
-        payload = {
-            "type": "broadcast",
-            "targets": targets,
-            "message": message
-        }
-        
+        payload = {"type": "broadcast", "targets": targets, "message": message}
+
         if media:
             payload["media"] = media
-        
+
         await self._ws.send_json(payload)
 
-    async def send_poll(self, number: str | None, group_name: str | None, message: str, options: list[str], allow_multiple_answers: bool, group_id: str | None = None):
+    async def send_poll(
+        self,
+        number: str | None,
+        group_name: str | None,
+        message: str,
+        options: list[str],
+        allow_multiple_answers: bool,
+        group_id: str | None = None,
+    ):
         """Send a poll via the bridge."""
         if not self._ws or self._ws.closed:
             _LOGGER.warning("Bridge not connected, cannot send poll")
@@ -110,7 +123,7 @@ class WhatsAppBridge:
             "type": "send_poll",
             "message": message,
             "options": options,
-            "allow_multiple_answers": allow_multiple_answers
+            "allow_multiple_answers": allow_multiple_answers,
         }
 
         if number:
@@ -123,12 +136,23 @@ class WhatsAppBridge:
             payload["group_id"] = group_id
 
         if not number and not group_name and not group_id:
-             _LOGGER.error("Neither number, group_name, nor group_id provided for poll")
-             return
+            _LOGGER.error("Neither number, group_name, nor group_id provided for poll")
+            return
 
         await self._ws.send_json(payload)
 
-    async def send_event(self, number: str | None, group_name: str | None, group_id: str | None, name: str, description: str | None = None, location: str | None = None, start_time: str = None, end_time: str | None = None, call_type: str | None = None):
+    async def send_event(
+        self,
+        number: str | None,
+        group_name: str | None,
+        group_id: str | None,
+        name: str,
+        description: str | None = None,
+        location: str | None = None,
+        start_time: str = None,
+        end_time: str | None = None,
+        call_type: str | None = None,
+    ):
         """Send an event via the bridge."""
         if not self._ws or self._ws.closed:
             _LOGGER.warning("Bridge not connected, cannot send event")
@@ -175,11 +199,9 @@ class WhatsAppBridge:
             _LOGGER.warning("Bridge not connected, cannot set group subject")
             return
 
-        await self._ws.send_json({
-            "type": "set_group_subject",
-            "group_id": group_id,
-            "subject": subject
-        })
+        await self._ws.send_json(
+            {"type": "set_group_subject", "group_id": group_id, "subject": subject}
+        )
 
     async def set_group_picture(self, group_id: str, media: dict):
         """Set a group's picture via the bridge."""
@@ -187,8 +209,6 @@ class WhatsAppBridge:
             _LOGGER.warning("Bridge not connected, cannot set group picture")
             return
 
-        await self._ws.send_json({
-            "type": "set_group_picture",
-            "group_id": group_id,
-            "media": media
-        })
+        await self._ws.send_json(
+            {"type": "set_group_picture", "group_id": group_id, "media": media}
+        )

@@ -1,7 +1,7 @@
 import voluptuous as vol
-from homeassistant.const import CONF_TYPE, CONF_PLATFORM, CONF_DOMAIN, CONF_EVENT
-from homeassistant.core import HomeAssistant, CALLBACK_TYPE
-from homeassistant.helpers import config_validation as cv, trigger
+from homeassistant.const import CONF_DOMAIN, CONF_PLATFORM, CONF_TYPE
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.helpers import trigger
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, EVENT_MESSAGE_RECEIVED
@@ -19,6 +19,7 @@ TRIGGER_SCHEMA = vol.Schema(
     }
 )
 
+
 async def async_get_triggers(hass: HomeAssistant, device_id: str) -> list[dict]:
     """List device triggers for WhatsApp Integration."""
     return [
@@ -29,6 +30,7 @@ async def async_get_triggers(hass: HomeAssistant, device_id: str) -> list[dict]:
             "device_id": device_id,
         }
     ]
+
 
 async def async_attach_trigger(
     hass: HomeAssistant,
@@ -46,21 +48,19 @@ async def async_attach_trigger(
     if "from_number" in config:
         event_config[trigger.CONF_EVENT_DATA]["from"] = config["from_number"]
 
-    # For 'contains_text', we can't easily use basic event data matching if we want partial match.
-    # We might need a custom trigger wrapper. 
-    # For now, let's keep it simple: exact match on 'from', and we'll handle partial match in a wrapper if needed.
-    # Or just use the event trigger with a template condition, but that's not 'device trigger'.
-    
-    # Actually, let's implement a manual check.
-    
+    # 'contains_text' needs a partial match, which event data matching cannot
+    # express, so all filters are checked manually in the listener.
+
     async def event_listener(event):
         """Handle the event."""
         data = event.data
-        
+
         # Check from_number
-        if "from_number" in config:
-            if data.get("from") != config["from_number"] and data.get("from") != f"{config['from_number']}@c.us":
-                 return
+        if "from_number" in config and (
+            data.get("from") != config["from_number"]
+            and data.get("from") != f"{config['from_number']}@c.us"
+        ):
+            return
 
         # Check from_group
         if "from_group" in config:
@@ -70,9 +70,11 @@ async def async_attach_trigger(
                 return
 
         # Check contains_text
-        if "contains_text" in config:
-            if config["contains_text"].lower() not in data.get("body", "").lower():
-                return
+        if (
+            "contains_text" in config
+            and config["contains_text"].lower() not in data.get("body", "").lower()
+        ):
+            return
 
         await action(event.context)
 

@@ -16,3 +16,9 @@ venv/
 # IDEs
 .idea/
 .vscode/
+# Tooling
+.ruff_cache/
+.pytest_cache/
+
+# Local planning notes, not published
+tasks/

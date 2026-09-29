@@ -1,0 +1,29 @@
+# Describes the format for the `platform: whatsapp` trigger
+
+_:
+  fields:
+    from_number:
+      example: "491701234567"
+      required: false
+      selector:
+        text:
+    from_group:
+      example: "Family"
+      required: false
+      selector:
+        text:
+    from_group_id:
+      example: "120363012345678901"
+      required: false
+      selector:
+        text:
+    contains_text:
+      example: "alarm"
+      required: false
+      selector:
+        text:
+    equals_text:
+      example: "status"
+      required: false
+      selector:
+        text:
