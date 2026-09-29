@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from homeassistant.components import automation
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.trigger import async_get_all_descriptions
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_mock_service
 
@@ -97,4 +98,20 @@ async def test_trigger_variables(hass: HomeAssistant, calls: list[ServiceCall]) 
     assert calls[0].data == {
         "from_number": "123456789@lid",
         "from_group_id": "120363000000000001@g.us",
+    }
+
+
+async def test_trigger_description_loads(
+    hass: HomeAssistant, calls: list[ServiceCall]
+) -> None:
+    """triggers.yaml is valid and describes every trigger option."""
+    await _setup(hass, {})
+    descriptions = await async_get_all_descriptions(hass)
+    fields = descriptions["whatsapp"]["fields"]
+    assert set(fields) == {
+        "from_number",
+        "from_group",
+        "from_group_id",
+        "contains_text",
+        "equals_text",
     }

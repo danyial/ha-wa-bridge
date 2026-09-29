@@ -41,6 +41,15 @@ def main() -> int:
             for key in REQUIRED_MANIFEST_KEYS
             if not manifest.get(key)
         )
+        strings = integration / "strings.json"
+        english = integration / "translations" / "en.json"
+        if strings.is_file() and (
+            not english.is_file()
+            or json.loads(english.read_text()) != json.loads(strings.read_text())
+        ):
+            errors.append(
+                f"{integration.name}: translations/en.json must match strings.json"
+            )
         if manifest.get("domain") != integration.name:
             errors.append(
                 f"domain {manifest.get('domain')!r} != dir {integration.name!r}"
