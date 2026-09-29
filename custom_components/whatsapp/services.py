@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -18,6 +19,7 @@ from homeassistant.util import dt as dt_util
 
 from .client import BridgeError, WhatsAppBridge
 from .const import DOMAIN, EVENT_GROUPS_RECEIVED
+from .helpers import normalize_chat_id
 from .media import async_load_media
 
 TARGET = {
@@ -101,13 +103,29 @@ def _bridge(hass: HomeAssistant) -> WhatsAppBridge:
     raise ServiceValidationError("The WhatsApp integration is not loaded")
 
 
-def _target(data: dict[str, Any]) -> dict[str, Any]:
+_PHONE_LIKE = re.compile(r"^[+\d\s()./-]+$")
+
+
+def _chat_id(hass: HomeAssistant, number: str) -> str:
+    """'+49 170 …', '0170 …' (HA country) or an id with '@' -> chat id."""
+    try:
+        return normalize_chat_id(number, hass.config.country)
+    except ValueError as err:
+        raise ServiceValidationError(str(err)) from err
+
+
+def _target(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     wire = {
-        "number": data.get("number"),
+        "number": _chat_id(hass, data["number"]) if data.get("number") else None,
         "group_name": data.get("group"),
         "group_id": data.get("group_id"),
     }
     return {key: value for key, value in wire.items() if value}
+
+
+def _broadcast_target(hass: HomeAssistant, target: str) -> str:
+    """Numbers are normalized; anything else is a group name."""
+    return _chat_id(hass, target) if _PHONE_LIKE.match(target) else target
 
 
 async def _request(hass: HomeAssistant, command: dict[str, Any]) -> Any:
@@ -126,7 +144,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         )
         command = {
             "type": "send_message",
-            **_target(call.data),
+            **_target(hass, call.data),
             "message": call.data["message"],
         }
         if media:
@@ -139,7 +157,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         )
         command = {
             "type": "broadcast",
-            "targets": call.data["targets"],
+            "targets": [_broadcast_target(hass, t) for t in call.data["targets"]],
             "message": call.data["message"],
         }
         if media:
@@ -159,7 +177,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
             hass,
             {
                 "type": "send_poll",
-                **_target(call.data),
+                **_target(hass, call.data),
                 "message": call.data["message"],
                 "options": call.data["options"],
                 "allow_multiple_answers": call.data["allow_multiple_answers"],
@@ -167,7 +185,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         )
 
     async def send_event(call: ServiceCall) -> ServiceResponse:
-        command = {"type": "send_event", **_target(call.data)}
+        command = {"type": "send_event", **_target(hass, call.data)}
         for key in ("name", "description", "location", "start_time", "end_time"):
             if call.data.get(key):
                 command[key] = call.data[key]

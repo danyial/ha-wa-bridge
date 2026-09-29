@@ -6,6 +6,9 @@ const { createBridgeServer, PROTOCOL_VERSION } = require('./lib/server');
 const { createCommandHandler } = require('./lib/commands');
 const { announce } = require('./lib/discovery');
 const { createStatusTracker, createHealthMonitor } = require('./lib/status');
+const { createLidResolver, bareId } = require('./lib/ids');
+const { createFilter } = require('./lib/filter');
+const { createEventBuilder } = require('./lib/events');
 
 const BRIDGE_VERSION = require('./package.json').version;
 const WWEBJS_VERSION = require('whatsapp-web.js/package.json').version;
@@ -35,17 +38,15 @@ if (allowedNumbersSet.size > 0) {
     console.log(`Allowed numbers filter: ${allowedNumbers.join(', ')}`);
 }
 
-// Helper to log incoming data based on log level
-function logIncomingData(type, data, rawObj) {
+// Log incoming messages and votes according to incoming_message_log_level.
+function logIncomingData(type, data) {
     if (incomingLogLevel === 'NONE') return;
-
-    if (incomingLogLevel === 'COMPACT') {
-        const sender = data.from || data.voter || 'unknown';
-        const group = data.isGroup ? ` (Group: ${data.chatName})` : (data.group_id ? ` (Group ID: ${data.group_id})` : '');
-        console.log(`[${type}] received from ${sender}${group}`);
+    const sender = data.sender_phone || data.sender || data.voter_phone || data.voter_id || 'unknown';
+    const chat = data.is_group ? ` in ${data.chatName || data.chat_id}` : '';
+    if (incomingLogLevel === 'FULL') {
+        console.log(`[${type}] from ${sender}${chat}:`, JSON.stringify(data));
     } else {
-        // FULL logging
-        console.log(`[${type}] RECEIVED`, rawObj);
+        console.log(`[${type}] from ${sender}${chat}`);
     }
 }
 
@@ -72,6 +73,12 @@ const client = new Client({
     },
     authTimeoutMs: 0 // Wait indefinitely for QR scan
 });
+
+// Own account: phone id on ready, LID resolved once (notes to self, #6).
+const me = { phone: null, lid: null };
+const resolver = createLidResolver({ lookup: (ids) => client.getContactLidAndPhone(ids) });
+const events = createEventBuilder({ client, resolver, me: () => me });
+const shouldForward = createFilter({ incomingMode, allowedGroupsLower, allowedNumbersSet });
 
 let lastQr = null;
 let shuttingDown = false;
@@ -185,8 +192,12 @@ client.on('qr', (qr) => {
 client.on('ready', () => {
     console.log('WhatsApp Client is ready!');
     lastQr = null;
+    me.phone = bareId(client.info?.wid?._serialized) ?? null;
     status.set('ready', { phone: client.info?.wid?.user ?? null, reason: null });
     health.start();
+    resolver.lidOf(me.phone).then((lid) => {
+        me.lid = lid;
+    });
 });
 
 client.on('authenticated', () => {
@@ -210,155 +221,43 @@ client.on('disconnected', async (reason) => {
     await restartClient(`disconnected: ${reason}`);
 });
 
-client.on('vote_update', async vote => {
-
-    let parentMsgId = null;
-    let groupId = null;
-    let voter = vote.voter;
-    let isGroup = false;
-    let chatName = '';
-    
-    // Extract purely the phone number from the JID format
-    if (voter && typeof voter === 'string') {
-        voter = voter.split('@')[0];
-        if (voter.includes(':')) {
-            voter = voter.split(':')[0];
-        }
+client.on('vote_update', async (vote) => {
+    try {
+        const data = await events.vote(vote);
+        const forward = shouldForward({
+            isGroup: data.is_group,
+            chatName: data.chatName,
+            senderPhone: data.voter_phone,
+        });
+        if (!forward) return;
+        logIncomingData('VOTE', data);
+        broadcast({ type: 'poll_vote', data });
+    } catch (err) {
+        console.error('Dropping poll vote, could not process it:', err.message);
     }
-    
-    if (vote.parentMessage) {
-        if (vote.parentMessage.id && vote.parentMessage.id._serialized) {
-            parentMsgId = vote.parentMessage.id._serialized;
-        }
-        
-        let to = vote.parentMessage.to;
-        if (to) {
-            isGroup = to.includes('@g.us');
-            if (isGroup) {
-               groupId = to.split('@')[0];
-            }
-        }
-        
-        // We need the chat name for group filtering
-        try {
-            const chat = await client.getChatById(to || vote.parentMessage.id.remote);
-            chatName = chat.name;
-            isGroup = chat.isGroup;
-        } catch (err) {
-            console.error('Error fetching chat info for poll vote:', err);
-        }
-    }
-    
-    // groups_only mode: skip non-group votes
-    if (incomingMode === 'groups_only' && !isGroup) {
-        return;
-    }
-
-    // numbers_only mode: skip group votes and votes not from allowed numbers
-    if (incomingMode === 'numbers_only') {
-        if (isGroup || !allowedNumbersSet.has(`${voter}@c.us`)) {
-            return;
-        }
-    }
-
-    // allowed_groups filter: skip votes from groups not in the list
-    if (allowedGroupsLower.length > 0) {
-        if (!isGroup || !allowedGroupsLower.includes((chatName || '').toLowerCase())) {
-            return;
-        }
-    }
-
-    // allowed_numbers filter: skip votes from numbers not in the list
-    if (allowedNumbersSet.size > 0 && incomingMode !== 'numbers_only') {
-        if (isGroup || !allowedNumbersSet.has(`${voter}@c.us`)) {
-            return;
-        }
-    }
-
-    const payloadData = {
-        voter: voter,
-        group_id: groupId,
-        selectedOptions: vote.selectedOptions,
-        pollCreationMessageId: parentMsgId,
-        timestamp: vote.timestamp
-    };
-
-    logIncomingData('VOTE_UPDATE', payloadData, vote);
-
-    broadcast({
-        type: 'poll_vote',
-        data: payloadData
-    });
 });
 
 if (incomingMode !== 'disabled') {
-    client.on('message_create', async msg => {
-        // If detect_own_messages is false, ignore messages sent by the bot itself
-        if (msg.fromMe && !detectOwnMessages) {
-            return;
-        }
-
-        let chatInfo = {};
+    client.on('message_create', async (msg) => {
+        // Own messages: see detect_own_messages (moves to the integration in #6).
+        if (msg.fromMe && !detectOwnMessages) return;
         try {
-            const chat = await msg.getChat();
-            chatInfo = {
-                chatName: chat.name,
-                isGroup: chat.isGroup,
-                groupId: chat.isGroup ? chat.id._serialized : null
-            };
-
-            // groups_only mode: skip non-group messages
-            if (incomingMode === 'groups_only' && !chat.isGroup) {
-                return;
-            }
-
-            // numbers_only mode: skip group messages and messages not from allowed numbers
-            if (incomingMode === 'numbers_only') {
-                if (chat.isGroup || (!allowedNumbersSet.has(msg.from) && !allowedNumbersSet.has(msg.author))) {
-                    return;
-                }
-            }
-
-            // allowed_groups filter: skip messages from groups not in the list
-            if (allowedGroupsLower.length > 0) {
-                if (!chat.isGroup || !allowedGroupsLower.includes(chat.name.toLowerCase())) {
-                    return;
-                }
-            }
-
-            // allowed_numbers filter: skip messages from numbers not in the list
-            if (allowedNumbersSet.size > 0 && incomingMode !== 'numbers_only') {
-                if (chat.isGroup || (!allowedNumbersSet.has(msg.from) && !allowedNumbersSet.has(msg.author))) {
-                    return;
-                }
-            }
+            const data = await events.message(msg);
+            const forward = shouldForward({
+                isGroup: data.is_group,
+                chatName: data.chatName,
+                senderPhone: data.sender_phone,
+            });
+            if (!forward) return;
+            logIncomingData('MESSAGE', data);
+            broadcast({ type: 'message', data });
         } catch (err) {
-            console.error('Error fetching chat info:', err);
+            // Fail closed: a message we cannot inspect is not forwarded.
+            console.error('Dropping message, could not process it:', err.message);
         }
-
-        const payloadData = {
-            from: msg.from,
-            to: msg.to,
-            body: msg.body,
-            timestamp: msg.timestamp,
-            hasMedia: msg.hasMedia,
-            author: msg.author,
-            deviceType: msg.deviceType,
-            isForwarded: msg.isForwarded,
-            fromMe: msg.fromMe,
-            ...chatInfo
-        };
-
-        logIncomingData('MESSAGE', payloadData, msg);
-
-        // Broadcast incoming message to HA
-        broadcast({
-            type: 'message',
-            data: payloadData
-        });
     });
 } else {
-    console.log('Incoming message handling is DISABLED. The bridge will not forward any received messages to Home Assistant.');
+    console.log('Incoming messages are disabled; the bridge only sends.');
 }
 
 // Start the client. Failures (Chromium crash, network down at boot) are
