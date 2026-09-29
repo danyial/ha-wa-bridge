@@ -3,6 +3,8 @@
 
 # Home Assistant WhatsApp Integration
 
+> **Fork** of [raulpetruta/ha-wa-bridge](https://github.com/raulpetruta/ha-wa-bridge) with a hardened add-on (authenticated WebSocket, no host port by default), current whatsapp-web.js, status entities and LID-aware sender handling. Work in progress towards 3.0.0.
+
 A custom integration to send and receive WhatsApp messages in Home Assistant naturally. It uses a local [whatsapp-web.js](https://wwebjs.dev/) bridge running in Docker.
 
 ## Features
@@ -275,7 +277,7 @@ action:
 #### Option A: Home Assistant Add-on (Recommended for HA OS)
 1.  Go to **Settings > Add-ons > Add-on Store**.
 2.  Click the **dots (top-right) > Repositories**.
-3.  Add this repository URL: `https://github.com/raulpetruta/ha-wa-bridge`
+3.  Add this repository URL: `https://github.com/danyial/ha-wa-bridge`
 4.  Reload the store and install **WhatsApp Bridge**.
 5.  Start the Add-on.
 
@@ -331,7 +333,7 @@ docker-compose up -d
 #### Option A: HACS (Recommended)
 1.  Make sure [HACS](https://hacs.xyz/) is installed.
 2.  Go to HACS > Integrations > Top-right menu > **Custom repositories**.
-3.  Add `https://github.com/raulpetruta/ha-wa-bridge` as an **Integration**.
+3.  Add `https://github.com/danyial/ha-wa-bridge` as an **Integration**.
 4.  Click **Download**.
 5.  Restart Home Assistant.
 
@@ -396,6 +398,42 @@ All options are also available as environment variables:
     1. **if asked** for a host, see the WhatsApp Bridge Add-on for **hostname**(info-tab) and **port**(configuration-tab), eg. "ws://cf9fc682-ha-wa-bridge:3000"
 5.  Check your **Home Assistant Notifications** (bell icon) for the QR code.
 6.  **Scan the QR Code** with your WhatsApp mobile app (Linked Devices).
+
+## Development
+
+```sh
+uv venv -p 3.14 .venv && uv pip install -p .venv -r requirements_test.txt
+.venv/bin/pytest
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+(cd wa-bridge && npm test)
+```
+
+The Python tests run the integration against a scripted fake bridge (a real WebSocket server on loopback, `tests/conftest.py`). The bridge tests use `node --test` and do not need Chromium.
+
+CI (GitLab) runs ruff, pytest, the bridge tests, hassfest, offline checks (`scripts/check_hacs.py`, `check_versions.py`, `check_addon.py`) and a test build of the add-on image. `hacs/action` needs GitHub and cannot run there.
+
+Add-on, bridge and integration share one version: `wa-bridge/config.yaml`, `wa-bridge/package.json` and `custom_components/whatsapp/manifest.json` must match (checked in CI).
+
+## Releasing
+
+Development happens in a GitLab repository; GitHub is a push mirror of `main` and of protected `v*` tags. HACS and the Home Assistant add-on store read from GitHub.
+
+1. Bump the version in all three files (e.g. `3.0.0`), merge to `main`, wait for a green pipeline.
+2. Create the tag and release on GitLab from `main`:
+   ```sh
+   glab release create v3.0.0 --ref main --name v3.0.0 --notes-file notes.md
+   ```
+   The tag must match the version with a `v` prefix.
+3. Wait until the mirror has pushed the tag (usually seconds; if it hangs, trigger a sync with `glab api -X POST "projects/:id/remote_mirrors/<mirror-id>/sync"`):
+   ```sh
+   gh api repos/danyial/ha-wa-bridge/git/refs/tags/v3.0.0
+   ```
+4. Publish the same notes on GitHub; this is what HACS offers as an update:
+   ```sh
+   gh release create v3.0.0 --repo danyial/ha-wa-bridge --verify-tag --title v3.0.0 --notes-file notes.md
+   ```
+
+Commits made through the GitLab web UI (including merge commits) carry the author's GitLab commit email and are mirrored to the public GitHub repository.
 
 ## Credits 
 Powered by [whatsapp-web.js](https://wwebjs.dev/).

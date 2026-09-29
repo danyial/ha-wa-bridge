@@ -1,0 +1,76 @@
+stages:
+  - lint
+  - test
+  - validate
+  - build
+
+default:
+  tags:
+    - docker
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+.python:
+  image: python:3.14-slim
+  cache:
+    key: pip-$CI_JOB_NAME
+    paths:
+      - .cache/pip
+
+ruff:
+  extends: .python
+  stage: lint
+  script:
+    - pip install -q ruff
+    - ruff check .
+    - ruff format --check .
+
+pytest:
+  extends: .python
+  stage: test
+  script:
+    - pip install -q -r requirements_test.txt
+    - pytest -q -p no:cacheprovider
+
+node-test:
+  stage: test
+  image: node:22-slim
+  script:
+    - cd wa-bridge
+    - node --version
+    - npm test
+
+hassfest:
+  stage: validate
+  image:
+    name: ghcr.io/home-assistant/hassfest
+    entrypoint: [""]
+  script:
+    # The image's entrypoint discovers custom_components/ relative to cwd.
+    - cd "$CI_PROJECT_DIR" && /usr/src/homeassistant/script/hassfest/docker/entrypoint.sh
+
+checks:
+  extends: .python
+  stage: validate
+  script:
+    - pip install -q pyyaml
+    - python scripts/check_hacs.py
+    - python scripts/check_versions.py
+    - python scripts/check_addon.py
+
+# Test build of the add-on image (amd64, no push). Publishing happens on
+# GitHub (mirror) for v* tags.
+image-build:
+  stage: build
+  image: quay.io/buildah/stable
+  variables:
+    STORAGE_DRIVER: vfs
+    BUILDAH_ISOLATION: chroot
+  rules:
+    - changes:
+        - wa-bridge/**/*
+        - .gitlab-ci.yml
+  script:
+    - buildah --version
+    - buildah build --layers=false -t ha-wa-bridge:ci wa-bridge
