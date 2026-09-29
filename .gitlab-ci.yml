@@ -60,13 +60,15 @@ checks:
     - python scripts/check_addon.py
 
 # Test build of the add-on image (amd64, no push). Publishing happens on
-# GitHub (mirror) for v* tags.
+# GitHub (mirror) for v* tags. The runner is unprivileged (no user
+# namespaces), so buildah/DinD are out; kaniko builds in userspace.
+# GoogleContainerTools/kaniko is archived; osscontainertools/kaniko is the
+# maintained fork.
 image-build:
   stage: build
-  image: quay.io/buildah/stable
-  variables:
-    STORAGE_DRIVER: vfs
-    BUILDAH_ISOLATION: chroot
+  image:
+    name: ghcr.io/osscontainertools/kaniko:v1.28.5-alpine
+    entrypoint: [""]
   rules:
     # Compare with main, not the previous push, so every branch that touches
     # the add-on gets a test build.
@@ -76,5 +78,8 @@ image-build:
           - .gitlab-ci.yml
         compare_to: refs/heads/main
   script:
-    - buildah --version
-    - buildah build --layers=false -t ha-wa-bridge:ci wa-bridge
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR/wa-bridge"
+      --dockerfile "$CI_PROJECT_DIR/wa-bridge/Dockerfile"
+      --custom-platform linux/amd64
+      --no-push
