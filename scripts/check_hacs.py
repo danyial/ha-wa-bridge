@@ -21,6 +21,13 @@ REQUIRED_MANIFEST_KEYS = (
 )
 
 
+def _keys(node: object, prefix: str = "") -> set[str]:
+    """Leaf paths of a translation file."""
+    if isinstance(node, dict):
+        return set().union(*(_keys(v, f"{prefix}/{k}") for k, v in node.items()))
+    return {prefix}
+
+
 def main() -> int:
     errors: list[str] = []
     hacs = json.loads((ROOT / "hacs.json").read_text())
@@ -50,6 +57,14 @@ def main() -> int:
             errors.append(
                 f"{integration.name}: translations/en.json must match strings.json"
             )
+        if strings.is_file():
+            reference = _keys(json.loads(strings.read_text()))
+            for translation in sorted((integration / "translations").glob("*.json")):
+                if diff := reference ^ _keys(json.loads(translation.read_text())):
+                    errors.append(
+                        f"{integration.name}/translations/{translation.name}: "
+                        f"keys differ from strings.json: {sorted(diff)[:5]}"
+                    )
         if manifest.get("domain") != integration.name:
             errors.append(
                 f"domain {manifest.get('domain')!r} != dir {integration.name!r}"

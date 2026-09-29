@@ -73,12 +73,14 @@ class WhatsAppBridge:
         token: str,
         on_frame: Callable[[dict[str, Any]], Awaitable[None]],
         on_auth_failed: Callable[[], None],
+        on_connection: Callable[[bool], None] = lambda connected: None,
     ) -> None:
         self.hass = hass
         self.url = url
         self._token = token
         self._on_frame = on_frame
         self._on_auth_failed = on_auth_failed
+        self._on_connection = on_connection
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._running = False
         self._ids = itertools.count(1)
@@ -102,6 +104,7 @@ class WhatsAppBridge:
                     self._ws = ws
                     backoff = BACKOFF_MIN
                     _LOGGER.info("Connected to WhatsApp bridge at %s", self.url)
+                    self._on_connection(True)
                     await self._read(ws)
             except aiohttp.WSServerHandshakeError as err:
                 if err.status == 401:
@@ -113,7 +116,9 @@ class WhatsAppBridge:
             except (aiohttp.ClientError, TimeoutError) as err:
                 _LOGGER.warning("WhatsApp bridge not reachable: %s", err)
             finally:
-                self._ws = None
+                if self._ws is not None:
+                    self._ws = None
+                    self._on_connection(False)
                 self._fail_pending(
                     BridgeError("Connection to the bridge lost", "disconnected")
                 )
