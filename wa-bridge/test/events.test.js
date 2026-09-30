@@ -108,3 +108,37 @@ test('poll vote in a direct chat, voter unresolved', async () => {
     assert.equal(data.is_group, false);
     assert.equal(data.group_id, null);
 });
+
+const MY_LID = '555555555555555@lid';
+
+function selfBuilder(ownLid) {
+    return createEventBuilder({
+        client: { getChatById: async () => ({}) },
+        resolver: {
+            phoneOf: async (id) => (id === MY_LID ? ME : id === LID ? PHONE : id?.endsWith('@c.us') ? id : null),
+        },
+        me: () => ({ phone: ME, lid: ownLid }),
+        log: { warn() {} },
+    });
+}
+
+test('to_self: note to self as seen live (from own number, to own LID)', async () => {
+    for (const ownLid of [MY_LID, null]) {
+        const data = await selfBuilder(ownLid).message(msg({ from: ME, to: MY_LID, fromMe: true }));
+        assert.equal(data.to_self, true, `own lid known: ${Boolean(ownLid)}`);
+    }
+});
+
+test('to_self: to == from and to == own number', async () => {
+    const b = selfBuilder(MY_LID);
+    assert.equal((await b.message(msg({ from: ME, to: ME, fromMe: true }))).to_self, true);
+    assert.equal((await b.message(msg({ from: MY_LID, to: ME, fromMe: true }))).to_self, true);
+});
+
+test('to_self is false for other chats, groups and incoming messages', async () => {
+    const b = selfBuilder(MY_LID);
+    assert.equal((await b.message(msg({ from: ME, to: PHONE, fromMe: true }))).to_self, false);
+    assert.equal((await b.message(msg({ from: ME, to: LID, fromMe: true }))).to_self, false);
+    assert.equal((await b.message(msg({ from: MY_LID, to: GROUP, fromMe: true }))).to_self, false);
+    assert.equal((await b.message(msg({ from: MY_LID, to: ME, fromMe: false }))).to_self, false);
+});

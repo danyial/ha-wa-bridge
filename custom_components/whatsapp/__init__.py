@@ -20,10 +20,14 @@ from homeassistant.util import dt as dt_util
 from .client import WhatsAppBridge
 from .const import (
     CONF_HOST,
+    CONF_OWN_MESSAGES,
     CONF_TOKEN,
     DOMAIN,
     EVENT_MESSAGE_RECEIVED,
     EVENT_POLL_VOTE_RECEIVED,
+    OWN_MESSAGES_ALL,
+    OWN_MESSAGES_OFF,
+    OWN_MESSAGES_SELF,
 )
 from .runtime import WhatsAppConfigEntry, WhatsAppData, signal_update
 from .services import async_setup_services
@@ -55,6 +59,16 @@ def _qr_png(data: str) -> bytes:
     return buffer.getvalue()
 
 
+def _wanted(entry: WhatsAppConfigEntry, message: dict[str, Any]) -> bool:
+    """Apply the "own messages" option; messages from others always pass."""
+    if not message.get("fromMe"):
+        return True
+    mode = entry.options.get(CONF_OWN_MESSAGES, OWN_MESSAGES_OFF)
+    if mode == OWN_MESSAGES_ALL:
+        return True
+    return mode == OWN_MESSAGES_SELF and bool(message.get("to_self"))
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> bool:
     """Set up WhatsApp from a config entry."""
     if entry.unique_id is None:
@@ -83,8 +97,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> 
         data = entry.runtime_data
         frame_type = frame.get("type")
         if frame_type in ("message", "poll_vote"):
+            payload = frame.get("data", {})
+            if frame_type == "message" and not _wanted(entry, payload):
+                return
             # device_id lets device triggers tell bridges apart.
-            payload = {**frame.get("data", {}), "device_id": device_id()}
+            payload = {**payload, "device_id": device_id()}
             hass.bus.async_fire(
                 EVENT_MESSAGE_RECEIVED
                 if frame_type == "message"

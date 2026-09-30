@@ -7,8 +7,17 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
+from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -16,7 +25,15 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
 from .client import BridgeAuthError, BridgeError, async_probe
-from .const import CONF_HOST, CONF_TOKEN, DEFAULT_HOST, DOMAIN
+from .const import (
+    CONF_HOST,
+    CONF_OWN_MESSAGES,
+    CONF_TOKEN,
+    DEFAULT_HOST,
+    DOMAIN,
+    OWN_MESSAGES_MODES,
+    OWN_MESSAGES_OFF,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +47,11 @@ class WhatsAppConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._discovered: dict[str, Any] = {}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> WhatsAppOptionsFlow:
+        return WhatsAppOptionsFlow()
 
     async def _validate(self, url: str, token: str) -> dict[str, str]:
         try:
@@ -116,4 +138,33 @@ class WhatsAppConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_TOKEN): TOKEN_SELECTOR}),
             description_placeholders={"host": entry.data[CONF_HOST]},
             errors=errors,
+        )
+
+
+class WhatsAppOptionsFlow(OptionsFlowWithReload):
+    """Own messages (and, later, the default chat)."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_OWN_MESSAGES,
+                        default=self.config_entry.options.get(
+                            CONF_OWN_MESSAGES, OWN_MESSAGES_OFF
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=OWN_MESSAGES_MODES,
+                            mode=SelectSelectorMode.LIST,
+                            translation_key=CONF_OWN_MESSAGES,
+                        )
+                    ),
+                }
+            ),
         )

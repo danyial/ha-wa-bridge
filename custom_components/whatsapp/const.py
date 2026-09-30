@@ -16,3 +16,10 @@ MEDIA_FETCH_TIMEOUT = 30
 EVENT_MESSAGE_RECEIVED = "whatsapp_message_received"
 EVENT_POLL_VOTE_RECEIVED = "whatsapp_poll_vote_received"
 EVENT_GROUPS_RECEIVED = "whatsapp_groups_received"
+
+# Options
+CONF_OWN_MESSAGES = "own_messages"
+OWN_MESSAGES_OFF = "off"
+OWN_MESSAGES_SELF = "self"
+OWN_MESSAGES_ALL = "all"
+OWN_MESSAGES_MODES = [OWN_MESSAGES_OFF, OWN_MESSAGES_SELF, OWN_MESSAGES_ALL]

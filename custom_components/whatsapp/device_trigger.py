@@ -8,18 +8,26 @@ from homeassistant.components.homeassistant.triggers import event as event_trigg
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_PLATFORM, CONF_TYPE
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, EVENT_MESSAGE_RECEIVED
+from .const import (
+    CONF_OWN_MESSAGES,
+    DOMAIN,
+    EVENT_MESSAGE_RECEIVED,
+    OWN_MESSAGES_OFF,
+)
 from .helpers import normalize_chat_id
 
 TRIGGER_MESSAGE_RECEIVED = "message_received"
+TRIGGER_MESSAGE_SENT = "message_sent"
+TRIGGER_TYPES = [TRIGGER_MESSAGE_RECEIVED, TRIGGER_MESSAGE_SENT]
 CONF_FROM = "from"
 
 TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
     {
-        vol.Required(CONF_TYPE): vol.In([TRIGGER_MESSAGE_RECEIVED]),
+        vol.Required(CONF_TYPE): vol.In(TRIGGER_TYPES),
         vol.Optional(CONF_FROM): cv.string,
     }
 )
@@ -28,21 +36,43 @@ TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
 async def async_get_triggers(
     hass: HomeAssistant, device_id: str
 ) -> list[dict[str, str]]:
-    """List the triggers of the WhatsApp device."""
+    """List the triggers of the WhatsApp device.
+
+    "Message sent" only while own messages reach Home Assistant; in the
+    notes-to-self mode it fires for notes to yourself only.
+    """
+    types = [TRIGGER_MESSAGE_RECEIVED]
+    if _own_messages_enabled(hass, device_id):
+        types.append(TRIGGER_MESSAGE_SENT)
     return [
         {
             CONF_PLATFORM: "device",
             CONF_DOMAIN: DOMAIN,
             CONF_DEVICE_ID: device_id,
-            CONF_TYPE: TRIGGER_MESSAGE_RECEIVED,
+            CONF_TYPE: trigger_type,
         }
+        for trigger_type in types
     ]
+
+
+def _own_messages_enabled(hass: HomeAssistant, device_id: str) -> bool:
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        return False
+    return any(
+        (entry := hass.config_entries.async_get_entry(entry_id)) is not None
+        and entry.domain == DOMAIN
+        and entry.options.get(CONF_OWN_MESSAGES, OWN_MESSAGES_OFF) != OWN_MESSAGES_OFF
+        for entry_id in device.config_entries
+    )
 
 
 async def async_get_trigger_capabilities(
     hass: HomeAssistant, config: ConfigType
 ) -> dict[str, vol.Schema]:
-    """Offer an optional sender filter."""
+    """Offer an optional sender filter for received messages."""
+    if config[CONF_TYPE] != TRIGGER_MESSAGE_RECEIVED:
+        return {}
     return {"extra_fields": vol.Schema({vol.Optional(CONF_FROM): str})}
 
 
@@ -51,6 +81,8 @@ async def async_validate_trigger_config(
 ) -> ConfigType:
     """Normalize the sender filter; national numbers use the HA country."""
     config = TRIGGER_SCHEMA(config)
+    if CONF_FROM in config and config[CONF_TYPE] != TRIGGER_MESSAGE_RECEIVED:
+        raise vol.Invalid("a sender filter is only supported for received messages")
     if sender := config.get(CONF_FROM):
         try:
             config[CONF_FROM] = normalize_chat_id(sender, hass.config.country)
@@ -71,7 +103,10 @@ async def async_attach_trigger(
     and LID senders alike; a LID filter matches `sender`. One listener, so a
     message cannot fire the trigger twice.
     """
-    event_data = {"device_id": config[CONF_DEVICE_ID], "fromMe": False}
+    event_data = {
+        "device_id": config[CONF_DEVICE_ID],
+        "fromMe": config[CONF_TYPE] == TRIGGER_MESSAGE_SENT,
+    }
     if sender := config.get(CONF_FROM):
         key = "sender_phone" if sender.endswith("@c.us") else "sender"
         event_data[key] = sender

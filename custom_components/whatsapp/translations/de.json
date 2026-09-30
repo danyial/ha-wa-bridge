@@ -93,5 +93,36 @@
         }
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WhatsApp-Optionen",
+        "data": {
+          "own_messages": "Eigene Nachrichten als Event"
+        },
+        "data_description": {
+          "own_messages": "Nachrichten, die du selbst sendest (Handy, WhatsApp Web), als whatsapp_message_received mit fromMe: true und als Geräte-Auslöser „Nachricht gesendet“. „Nur Notizen an mich“ lässt nur Nachrichten an deinen eigenen Chat durch, praktisch für Befehle an Home Assistant. Bei „Alle“ können Automationen, die antworten, sich selbst auslösen (Schleife)."
+        }
+      }
+    }
+  },
+  "selector": {
+    "own_messages": {
+      "options": {
+        "off": "Aus",
+        "self": "Nur Notizen an mich",
+        "all": "Alle eigenen Nachrichten"
+      }
+    }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "message_received": "Nachricht empfangen",
+      "message_sent": "Nachricht gesendet"
+    },
+    "extra_fields": {
+      "from": "Von (Nummer oder LID)"
+    }
   }
 }

@@ -232,6 +232,31 @@ WhatsApp increasingly identifies people by a *LID* (`…@lid`) instead of their 
 
 The earlier fields (`from`, `to`, `author`, `body`, `chatName`, `isGroup`, `groupId`, …) are unchanged. In `whatsapp_poll_vote_received`, `voter` is now the voter's phone number (digits) when a LID can be resolved; `voter_id`, `voter_phone` and `chat_id` are new.
 
+### Own messages and notes to self
+
+Messages you send yourself (from your phone or WhatsApp Web) reach Home Assistant depending on the integration option **Own messages** (*Settings → Devices & services → WhatsApp → Configure*):
+
+- **Off** *(default)*: ignored.
+- **Notes to self only**: only messages to your own chat ("Message yourself"). Handy for commands to Home Assistant from your phone.
+- **All**: every message you send, in groups and direct chats. Careful with automations that reply: they can trigger themselves.
+
+Own messages arrive as `whatsapp_message_received` with `fromMe: true` and `to_self: true` for notes to self, and fire the device trigger **Message sent** (offered while the option is not *Off*). Example:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: whatsapp_message_received
+    event_data:
+      to_self: true
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.body | lower == 'licht aus' }}"
+actions:
+  - action: light.turn_off
+    target:
+      area_id: wohnzimmer
+```
+
 ### Group Message Trigger
 To trigger an automation from a group message, use `from_group` with the exact group name:
 
@@ -319,9 +344,6 @@ services:
       # - AUTH_TOKEN=change-me-to-a-long-random-string
       # - WA_WEB_VERSION=2.3000.1017054665 # Emergency pin only; empty = always the live WhatsApp Web version
 
-      # Forward messages you send yourself (groups only)
-      - DETECT_OWN_MESSAGES=false
-
       # Incoming message mode: all | disabled | groups_only | numbers_only
       # - all          → forward everything (default)
       # - disabled     → send-only mode, no incoming messages processed
@@ -380,7 +402,7 @@ docker-compose up -d
 - **`restart_unresponsive_minutes`** *(optional)*: Restart WhatsApp Web after it has been unresponsive for this many minutes. Empty or `0`: only report it.
 If you are using the Home Assistant Add-on, you can configure the following options in the add-on configuration tab:
 
-- **`detect_own_messages`**: Set to `true` to forward messages sent by your own account (e.g., from WhatsApp Web or your phone). Works for group messages only. Default: `false`.
+- **`detect_own_messages`**: *Deprecated since 3.0, no effect.* Own messages always reach Home Assistant; choose in the integration option **Own messages** what happens with them (see *Own messages and notes to self*). Incoming filters below do not apply to own messages.
 
 - **`incoming_messages_mode`**: Controls which incoming messages are forwarded to Home Assistant. Accepted values:
   - `all` *(default)* – all messages are forwarded, same as previous behaviour.
@@ -415,7 +437,6 @@ If you are using the Home Assistant Add-on, you can configure the following opti
 All options are also available as environment variables:
 ```yaml
     environment:
-      - DETECT_OWN_MESSAGES=true
       # Options: all | disabled | groups_only | numbers_only
       - INCOMING_MESSAGES_MODE=disabled
       # Options: COMPACT | FULL | NONE

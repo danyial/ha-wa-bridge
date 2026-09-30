@@ -34,6 +34,9 @@ console.log(`Incoming message log level: ${incomingLogLevel}`);
 if (allowedGroupsLower.length > 0) {
     console.log(`Allowed groups filter: ${allowedGroups.join(', ')}`);
 }
+if (detectOwnMessages) {
+    console.warn('detect_own_messages is deprecated and has no effect: own messages always reach Home Assistant; choose what to do with them in the integration options');
+}
 if (allowedNumbersSet.size > 0) {
     console.log(`Allowed numbers filter: ${allowedNumbers.join(', ')}`);
 }
@@ -239,15 +242,18 @@ client.on('vote_update', async (vote) => {
 
 if (incomingMode !== 'disabled') {
     client.on('message_create', async (msg) => {
-        // Own messages: see detect_own_messages (moves to the integration in #6).
-        if (msg.fromMe && !detectOwnMessages) return;
         try {
             const data = await events.message(msg);
-            const forward = shouldForward({
-                isGroup: data.is_group,
-                chatName: data.chatName,
-                senderPhone: data.sender_phone,
-            });
+            // Own messages always go to Home Assistant, which decides with its
+            // "own messages" option (off / notes to self / all). The incoming
+            // filters are about other people's messages.
+            const forward =
+                msg.fromMe ||
+                shouldForward({
+                    isGroup: data.is_group,
+                    chatName: data.chatName,
+                    senderPhone: data.sender_phone,
+                });
             if (!forward) return;
             logIncomingData('MESSAGE', data);
             broadcast({ type: 'message', data });
