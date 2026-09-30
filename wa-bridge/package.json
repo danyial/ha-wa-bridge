@@ -1,6 +1,6 @@
 {
   "name": "ha-wa-bridge",
-  "version": "3.0.0-dev.6",
+  "version": "3.0.0-dev.7",
   "description": "WhatsApp Web bridge (whatsapp-web.js) for Home Assistant",
   "main": "index.js",
   "scripts": {
