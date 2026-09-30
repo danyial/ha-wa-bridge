@@ -485,6 +485,22 @@ actions:
       message: "WhatsApp: {{ states('sensor.whatsapp_status') }}"
 ```
 
+### Notify
+
+`notify.whatsapp` sends to the **default chat** set in the integration options (*Default chat (recipient for notify)*): a number (`+49 170 …`, or national with the Home Assistant country) or a group id (`…@g.us`). A title is sent in bold on the first line. Your own number is refused: WhatsApp does not notify you about messages to yourself.
+
+```yaml
+actions:
+  - action: notify.send_message
+    target:
+      entity_id: notify.whatsapp
+    data:
+      title: Haustür
+      message: "Die Tür steht seit 10 Minuten offen."
+```
+
+For other recipients, media, polls or groups by name use `whatsapp.send_message` and friends.
+
 ### Service responses
 
 `send_message`, `send_poll`, `send_event`, `send_broadcast` and `get_groups` can return data (`response_variable` in scripts), e.g. the sent message id or the group list. All services now fail with an error instead of silently doing nothing when the bridge is unreachable, WhatsApp is not linked, or a target is invalid.

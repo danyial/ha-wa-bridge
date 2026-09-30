@@ -9,6 +9,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlowWithReload,
@@ -26,6 +27,7 @@ from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
 from .client import BridgeAuthError, BridgeError, async_probe
 from .const import (
+    CONF_DEFAULT_CHAT,
     CONF_HOST,
     CONF_OWN_MESSAGES,
     CONF_TOKEN,
@@ -34,6 +36,7 @@ from .const import (
     OWN_MESSAGES_MODES,
     OWN_MESSAGES_OFF,
 )
+from .helpers import normalize_chat_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,29 +145,57 @@ class WhatsAppConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class WhatsAppOptionsFlow(OptionsFlowWithReload):
-    """Own messages (and, later, the default chat)."""
+    """Default chat for notify and own messages."""
+
+    def _own_chat_id(self) -> str | None:
+        """The linked account's own chat, if the bridge has reported it."""
+        entry = self.config_entry
+        if entry.state is not ConfigEntryState.LOADED:
+            return None
+        phone = entry.runtime_data.status.get("phone")
+        return f"{phone}@c.us" if phone else None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            data = dict(user_input)
+            if raw := (data.get(CONF_DEFAULT_CHAT) or "").strip():
+                try:
+                    data[CONF_DEFAULT_CHAT] = normalize_chat_id(
+                        raw, self.hass.config.country
+                    )
+                except ValueError:
+                    errors[CONF_DEFAULT_CHAT] = "invalid_chat_id"
+                else:
+                    # A message to yourself does not notify you on the phone.
+                    if data[CONF_DEFAULT_CHAT] == self._own_chat_id():
+                        errors[CONF_DEFAULT_CHAT] = "own_number"
+            else:
+                data.pop(CONF_DEFAULT_CHAT, None)
+            if not errors:
+                return self.async_create_entry(data=data)
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_OWN_MESSAGES,
-                        default=self.config_entry.options.get(
-                            CONF_OWN_MESSAGES, OWN_MESSAGES_OFF
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Optional(CONF_DEFAULT_CHAT): str,
+                        vol.Required(
+                            CONF_OWN_MESSAGES,
+                            default=options.get(CONF_OWN_MESSAGES, OWN_MESSAGES_OFF),
+                        ): SelectSelector(
+                            SelectSelectorConfig(
+                                options=OWN_MESSAGES_MODES,
+                                mode=SelectSelectorMode.LIST,
+                                translation_key=CONF_OWN_MESSAGES,
+                            )
                         ),
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=OWN_MESSAGES_MODES,
-                            mode=SelectSelectorMode.LIST,
-                            translation_key=CONF_OWN_MESSAGES,
-                        )
-                    ),
-                }
+                    }
+                ),
+                user_input or options,
             ),
+            errors=errors,
         )

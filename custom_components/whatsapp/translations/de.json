@@ -99,12 +99,18 @@
       "init": {
         "title": "WhatsApp-Optionen",
         "data": {
-          "own_messages": "Eigene Nachrichten als Event"
+          "own_messages": "Eigene Nachrichten als Event",
+          "default_chat": "Standard-Chat (Empfänger für notify)"
         },
         "data_description": {
-          "own_messages": "Nachrichten, die du selbst sendest (Handy, WhatsApp Web), als whatsapp_message_received mit fromMe: true und als Geräte-Auslöser „Nachricht gesendet“. „Nur Notizen an mich“ lässt nur Nachrichten an deinen eigenen Chat durch, praktisch für Befehle an Home Assistant. Bei „Alle“ können Automationen, die antworten, sich selbst auslösen (Schleife)."
+          "own_messages": "Nachrichten, die du selbst sendest (Handy, WhatsApp Web), als whatsapp_message_received mit fromMe: true und als Geräte-Auslöser „Nachricht gesendet“. „Nur Notizen an mich“ lässt nur Nachrichten an deinen eigenen Chat durch, praktisch für Befehle an Home Assistant. Bei „Alle“ können Automationen, die antworten, sich selbst auslösen (Schleife).",
+          "default_chat": "Nummer (+49 170 …, oder national mit dem in Home Assistant eingestellten Land) oder Gruppen-ID (…@g.us), an die notify.send_message für die WhatsApp-Entity sendet. Nicht die eigene Nummer: Nachrichten an dich selbst lösen auf dem Handy keine Benachrichtigung aus."
         }
       }
+    },
+    "error": {
+      "invalid_chat_id": "Keine gültige Nummer oder Chat-ID. Nationale Nummern brauchen das in Home Assistant eingestellte Land.",
+      "own_number": "Das ist die eigene Nummer des verknüpften Kontos; WhatsApp benachrichtigt dich nicht über Nachrichten an dich selbst. Bitte ein anderes Konto wählen."
     }
   },
   "selector": {
