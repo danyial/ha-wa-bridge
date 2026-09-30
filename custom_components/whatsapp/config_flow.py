@@ -16,6 +16,9 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -29,6 +32,7 @@ from .client import BridgeAuthError, BridgeError, async_probe
 from .const import (
     CONF_DEFAULT_CHAT,
     CONF_HOST,
+    CONF_MAX_AGE,
     CONF_OWN_MESSAGES,
     CONF_TOKEN,
     DEFAULT_HOST,
@@ -161,6 +165,7 @@ class WhatsAppOptionsFlow(OptionsFlowWithReload):
         errors: dict[str, str] = {}
         if user_input is not None:
             data = dict(user_input)
+            data[CONF_MAX_AGE] = int(data.get(CONF_MAX_AGE) or 0)
             if raw := (data.get(CONF_DEFAULT_CHAT) or "").strip():
                 try:
                     data[CONF_DEFAULT_CHAT] = normalize_chat_id(
@@ -191,6 +196,17 @@ class WhatsAppOptionsFlow(OptionsFlowWithReload):
                                 options=OWN_MESSAGES_MODES,
                                 mode=SelectSelectorMode.LIST,
                                 translation_key=CONF_OWN_MESSAGES,
+                            )
+                        ),
+                        vol.Required(
+                            CONF_MAX_AGE, default=options.get(CONF_MAX_AGE, 0)
+                        ): NumberSelector(
+                            NumberSelectorConfig(
+                                min=0,
+                                max=10080,
+                                step=1,
+                                mode=NumberSelectorMode.BOX,
+                                unit_of_measurement="min",
                             )
                         ),
                     }

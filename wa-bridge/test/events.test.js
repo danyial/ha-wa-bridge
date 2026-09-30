@@ -142,3 +142,30 @@ test('to_self is false for other chats, groups and incoming messages', async () 
     assert.equal((await b.message(msg({ from: MY_LID, to: GROUP, fromMe: true }))).to_self, false);
     assert.equal((await b.message(msg({ from: MY_LID, to: ME, fromMe: false }))).to_self, false);
 });
+
+test('age: seconds since the message was sent, votes from interractedAtTs (ms)', async () => {
+    const b = createEventBuilder({
+        client: { getChatById: async () => ({ name: 'G' }) },
+        resolver,
+        me: () => ({ phone: ME }),
+        log: { warn() {} },
+        now: () => 1_000_000 * 1000,
+    });
+    const fresh = await b.message(msg({ from: PHONE, to: ME, timestamp: 1_000_000 - 3 }));
+    assert.equal(fresh.age, 3);
+    const late = await b.message(msg({ from: PHONE, to: ME, timestamp: 1_000_000 - 7200 }));
+    assert.equal(late.age, 7200);
+    const future = await b.message(msg({ from: PHONE, to: ME, timestamp: 1_000_000 + 5 }));
+    assert.equal(future.age, 0, 'clock skew never gives a negative age');
+    const unknown = await b.message(msg({ from: PHONE, to: ME, timestamp: undefined }));
+    assert.equal(unknown.age, null);
+
+    const vote = await b.vote({
+        voter: PHONE,
+        selectedOptions: [],
+        interractedAtTs: (1_000_000 - 90) * 1000,
+        parentMessage: { to: GROUP, id: { _serialized: 'p', remote: GROUP } },
+    });
+    assert.equal(vote.timestamp, 1_000_000 - 90);
+    assert.equal(vote.age, 90);
+});
