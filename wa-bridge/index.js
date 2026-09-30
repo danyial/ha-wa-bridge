@@ -9,10 +9,12 @@ const { createStatusTracker, createHealthMonitor } = require('./lib/status');
 const { createLidResolver, bareId } = require('./lib/ids');
 const { createFilter } = require('./lib/filter');
 const { createEventBuilder } = require('./lib/events');
+const { errorText, isHarmlessRejection } = require('./lib/errors');
 
 const BRIDGE_VERSION = require('./package.json').version;
 const WWEBJS_VERSION = require('whatsapp-web.js/package.json').version;
 const DATA_PATH = process.env.WA_DATA_PATH || './.wwebjs_auth';
+const STARTUP_TIMEOUT_MS = 3 * 60 * 1000;
 
 const {
     authToken,
@@ -74,7 +76,11 @@ const client = new Client({
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
     },
-    authTimeoutMs: 0 // Wait indefinitely for QR scan
+    // How long whatsapp-web.js waits for WhatsApp Web to load. It treats 0 as
+    // "use the default" (30 s), not as "forever" (upstream relied on that);
+    // a first start on a small VM takes longer and then looped on
+    // "auth timeout".
+    authTimeoutMs: STARTUP_TIMEOUT_MS,
 });
 
 // Own account: phone id on ready, LID resolved once (notes to self, #6).
@@ -107,8 +113,8 @@ const health = createHealthMonitor({
         if (status.status === 'ready') status.set('ready', { wa_state: waState });
     },
     onUnresponsive: (err) => {
-        console.warn(`WhatsApp Web reports ready but does not answer (${err.message}); restart the add-on if this persists`);
-        status.set('unresponsive', { reason: err.message });
+        console.warn(`WhatsApp Web reports ready but does not answer (${errorText(err)}); restart the add-on if this persists`);
+        status.set('unresponsive', { reason: errorText(err) });
         if (restartUnresponsiveMinutes > 0) {
             unresponsiveTimer = setTimeout(() => {
                 if (status.status === 'unresponsive') restartClient('unresponsive');
@@ -173,7 +179,7 @@ async function restartClient(reason) {
     try {
         await client.destroy();
     } catch (err) {
-        console.error('Error closing the browser:', err.message);
+        console.error('Error closing the browser:', errorText(err));
     }
     restarting = false;
     await startClient();
@@ -236,7 +242,7 @@ client.on('vote_update', async (vote) => {
         logIncomingData('VOTE', data);
         broadcast({ type: 'poll_vote', data });
     } catch (err) {
-        console.error('Dropping poll vote, could not process it:', err.message);
+        console.error('Dropping poll vote, could not process it:', errorText(err));
     }
 });
 
@@ -259,7 +265,7 @@ if (incomingMode !== 'disabled') {
             broadcast({ type: 'message', data });
         } catch (err) {
             // Fail closed: a message we cannot inspect is not forwarded.
-            console.error('Dropping message, could not process it:', err.message);
+            console.error('Dropping message, could not process it:', errorText(err));
         }
     });
 } else {
@@ -280,7 +286,7 @@ async function startClient() {
         await client.initialize();
         retryMs = RETRY_MIN_MS;
     } catch (err) {
-        console.error(`Failed to initialize client, retrying in ${retryMs / 1000}s:`, err.message);
+        console.error(`Failed to initialize client, retrying in ${retryMs / 1000}s: ${errorText(err)}`);
         try {
             await client.destroy();
         } catch {
@@ -292,6 +298,10 @@ async function startClient() {
 }
 
 process.on('unhandledRejection', (err) => {
+    if (isHarmlessRejection(err)) {
+        console.log(`Ignored whatsapp-web.js cache read error: ${errorText(err)}`);
+        return;
+    }
     console.error('Unhandled rejection:', err);
 });
 
@@ -308,7 +318,7 @@ async function shutdown(signal) {
         await bridge.close();
         await client.destroy();
     } catch (err) {
-        console.error('Error during shutdown:', err.message);
+        console.error('Error during shutdown:', errorText(err));
     }
     process.exit(0);
 }
@@ -321,7 +331,7 @@ async function main() {
     try {
         await announce({ port: listening, token });
     } catch (err) {
-        console.error('Discovery failed (set up the integration manually):', err.message);
+        console.error('Discovery failed (set up the integration manually):', errorText(err));
     }
     await startClient();
 }
