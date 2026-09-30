@@ -100,11 +100,13 @@
         "title": "WhatsApp options",
         "data": {
           "own_messages": "Own messages as events",
-          "default_chat": "Default chat (recipient for notify)"
+          "default_chat": "Default chat (recipient for notify)",
+          "max_age_minutes": "Ignore messages older than (minutes)"
         },
         "data_description": {
           "own_messages": "Messages you send yourself (phone, WhatsApp Web) as whatsapp_message_received with fromMe: true and the device trigger \"Message sent\". \"Notes to self\" only passes messages to your own chat, useful for commands to Home Assistant. With \"All\", automations that reply can trigger themselves (loop).",
-          "default_chat": "Number (+49 170 …, or national with the Home Assistant country) or group id (…@g.us) that notify.send_message on the WhatsApp entity sends to. Not your own number: messages to yourself do not notify you on the phone."
+          "default_chat": "Number (+49 170 …, or national with the Home Assistant country) or group id (…@g.us) that notify.send_message on the WhatsApp entity sends to. Not your own number: messages to yourself do not notify you on the phone.",
+          "max_age_minutes": "WhatsApp delivers messages late when the bridge was offline (restart, update). Messages and poll votes older than this do not fire events, so automations do not act on stale commands. 0: no limit (every message is passed on)."
         }
       }
     },

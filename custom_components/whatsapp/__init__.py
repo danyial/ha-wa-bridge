@@ -20,6 +20,7 @@ from homeassistant.util import dt as dt_util
 from .client import WhatsAppBridge
 from .const import (
     CONF_HOST,
+    CONF_MAX_AGE,
     CONF_OWN_MESSAGES,
     CONF_TOKEN,
     DOMAIN,
@@ -70,6 +71,13 @@ def _wanted(entry: WhatsAppConfigEntry, message: dict[str, Any]) -> bool:
     return mode == OWN_MESSAGES_SELF and bool(message.get("to_self"))
 
 
+def _too_old(entry: WhatsAppConfigEntry, payload: dict[str, Any]) -> bool:
+    """WhatsApp delivers messages late, e.g. after the bridge was offline."""
+    limit = entry.options.get(CONF_MAX_AGE, 0)
+    age = payload.get("age")
+    return bool(limit) and isinstance(age, int | float) and age > limit * 60
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> bool:
     """Set up WhatsApp from a config entry."""
     if entry.unique_id is None:
@@ -99,6 +107,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: WhatsAppConfigEntry) -> 
         frame_type = frame.get("type")
         if frame_type in ("message", "poll_vote"):
             payload = frame.get("data", {})
+            if _too_old(entry, payload):
+                _LOGGER.debug(
+                    "Ignoring %s sent %s s ago (older than the configured limit)",
+                    frame_type,
+                    payload.get("age"),
+                )
+                return
             if frame_type == "message" and not _wanted(entry, payload):
                 return
             # device_id lets device triggers tell bridges apart.

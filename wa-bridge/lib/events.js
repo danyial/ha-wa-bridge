@@ -10,7 +10,15 @@ const { bareId, serialize, isGroup, isLid } = require('./ids');
 //   sender_lid    sender's LID if WhatsApp sent one
 //   is_group
 //   to_self       own message to your own chat ("notes to self")
-function createEventBuilder({ client, resolver, me, log = console }) {
+//   age           seconds since it was sent; large for messages WhatsApp
+//                 delivers late, e.g. after the bridge was offline
+function createEventBuilder({ client, resolver, me, log = console, now = () => Date.now() }) {
+    // Seconds since `timestamp` (unix seconds); null if unknown.
+    function ageOf(timestamp) {
+        if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return null;
+        return Math.max(0, Math.round(now() / 1000 - timestamp));
+    }
+
     async function chatName(chatId, getChat) {
         try {
             const chat = await getChat(chatId);
@@ -50,6 +58,7 @@ function createEventBuilder({ client, resolver, me, log = console }) {
             sender_lid: isLid(sender) ? sender : null,
             is_group: group,
             to_self: toSelf,
+            age: ageOf(msg.timestamp),
         };
     }
 
@@ -73,6 +82,8 @@ function createEventBuilder({ client, resolver, me, log = console }) {
         const chatId = bareId(parent?.to && isGroup(parent.to) ? parent.to : parent?.id?.remote ?? parent?.to);
         const group = isGroup(chatId);
         const name = chatId ? await chatName(chatId, (id) => client.getChatById(id)) : null;
+        const timestamp =
+            typeof pollVote.interractedAtTs === 'number' ? Math.round(pollVote.interractedAtTs / 1000) : null;
         return {
             // Before 3.0: digits of the voter; now the phone number when a LID
             // can be resolved (it used to be the LID's digits).
@@ -85,7 +96,10 @@ function createEventBuilder({ client, resolver, me, log = console }) {
             is_group: group,
             selectedOptions: pollVote.selectedOptions,
             pollCreationMessageId: serialize(parent?.id),
-            timestamp: pollVote.timestamp,
+            // PollVote has no `timestamp` (it was always undefined before 3.0);
+            // interractedAtTs [sic] is in milliseconds.
+            timestamp: timestamp,
+            age: ageOf(timestamp),
         };
     }
 

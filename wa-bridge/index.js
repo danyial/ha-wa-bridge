@@ -43,15 +43,22 @@ if (allowedNumbersSet.size > 0) {
     console.log(`Allowed numbers filter: ${allowedNumbers.join(', ')}`);
 }
 
+function formatAge(seconds) {
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)} h`;
+    return `${Math.round(seconds / 86400)} d`;
+}
+
 // Log incoming messages and votes according to incoming_message_log_level.
 function logIncomingData(type, data) {
     if (incomingLogLevel === 'NONE') return;
     const sender = data.sender_phone || data.sender || data.voter_phone || data.voter_id || 'unknown';
     const chat = data.is_group ? ` in ${data.chatName || data.chat_id}` : '';
+    const late = data.age > 60 ? ` (sent ${formatAge(data.age)} ago)` : '';
     if (incomingLogLevel === 'FULL') {
-        console.log(`[${type}] from ${sender}${chat}:`, JSON.stringify(data));
+        console.log(`[${type}] from ${sender}${chat}${late}:`, JSON.stringify(data));
     } else {
-        console.log(`[${type}] from ${sender}${chat}`);
+        console.log(`[${type}] from ${sender}${chat}${late}`);
     }
 }
 

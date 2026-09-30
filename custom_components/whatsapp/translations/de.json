@@ -100,11 +100,13 @@
         "title": "WhatsApp-Optionen",
         "data": {
           "own_messages": "Eigene Nachrichten als Event",
-          "default_chat": "Standard-Chat (Empfänger für notify)"
+          "default_chat": "Standard-Chat (Empfänger für notify)",
+          "max_age_minutes": "Nachrichten ignorieren, die älter sind als (Minuten)"
         },
         "data_description": {
           "own_messages": "Nachrichten, die du selbst sendest (Handy, WhatsApp Web), als whatsapp_message_received mit fromMe: true und als Geräte-Auslöser „Nachricht gesendet“. „Nur Notizen an mich“ lässt nur Nachrichten an deinen eigenen Chat durch, praktisch für Befehle an Home Assistant. Bei „Alle“ können Automationen, die antworten, sich selbst auslösen (Schleife).",
-          "default_chat": "Nummer (+49 170 …, oder national mit dem in Home Assistant eingestellten Land) oder Gruppen-ID (…@g.us), an die notify.send_message für die WhatsApp-Entity sendet. Nicht die eigene Nummer: Nachrichten an dich selbst lösen auf dem Handy keine Benachrichtigung aus."
+          "default_chat": "Nummer (+49 170 …, oder national mit dem in Home Assistant eingestellten Land) oder Gruppen-ID (…@g.us), an die notify.send_message für die WhatsApp-Entity sendet. Nicht die eigene Nummer: Nachrichten an dich selbst lösen auf dem Handy keine Benachrichtigung aus.",
+          "max_age_minutes": "WhatsApp liefert Nachrichten nach, wenn die Bridge offline war (Neustart, Update). Nachrichten und Umfrage-Stimmen, die älter sind, lösen keine Events aus, damit Automationen nicht auf veraltete Befehle reagieren. 0: keine Grenze (alles wird weitergegeben)."
         }
       }
     },

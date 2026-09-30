@@ -229,8 +229,9 @@ WhatsApp increasingly identifies people by a *LID* (`…@lid`) instead of their 
 | `chat_id` | the chat: group `…@g.us` or the other person |
 | `is_group` | group chat |
 | `device_id` | the WhatsApp device in Home Assistant |
+| `age` | seconds since the message was sent (large when WhatsApp delivers it late, e.g. after the add-on was offline) |
 
-The earlier fields (`from`, `to`, `author`, `body`, `chatName`, `isGroup`, `groupId`, …) are unchanged. In `whatsapp_poll_vote_received`, `voter` is now the voter's phone number (digits) when a LID can be resolved; `voter_id`, `voter_phone` and `chat_id` are new.
+The earlier fields (`from`, `to`, `author`, `body`, `chatName`, `isGroup`, `groupId`, …) are unchanged. Messages that arrive late (the add-on was restarted or offline) are passed on by default; the integration option **Ignore messages older than (minutes)** drops them so automations do not act on stale commands. Poll votes now carry a real `timestamp` (it was always empty before 3.0). In `whatsapp_poll_vote_received`, `voter` is now the voter's phone number (digits) when a LID can be resolved; `voter_id`, `voter_phone` and `chat_id` are new.
 
 ### Own messages and notes to self
 

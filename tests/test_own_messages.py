@@ -70,7 +70,7 @@ async def test_options_flow_default_and_reload(
     hass.config_entries.options.async_abort(result["flow_id"])
 
     await _set_mode(hass, setup_entry, "self")
-    assert setup_entry.options == {CONF_OWN_MESSAGES: "self"}
+    assert setup_entry.options == {CONF_OWN_MESSAGES: "self", "max_age_minutes": 0}
     await _connected(hass, setup_entry)
     assert setup_entry.runtime_data.bridge is not bridge_before, "reloaded"
 
@@ -170,3 +170,62 @@ async def test_sender_filter_only_for_received(hass: HomeAssistant) -> None:
                 "from": "491700000001",
             },
         )
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        (0, ["fresh", "old", "unknown"]),
+        (5, ["fresh", "unknown"]),
+    ],
+)
+async def test_max_age(
+    hass: HomeAssistant,
+    setup_entry: MockConfigEntry,
+    bridge: FakeBridge,
+    limit: int,
+    expected: list[str],
+) -> None:
+    if limit:
+        result = await hass.config_entries.options.async_init(setup_entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {CONF_OWN_MESSAGES: "off", "max_age_minutes": float(limit)},
+        )
+        assert setup_entry.options["max_age_minutes"] == limit, "stored as int"
+        await _connected(hass, setup_entry)
+    events = async_capture_events(hass, EVENT_MESSAGE_RECEIVED)
+    for body, age in (("fresh", 10), ("old", 301), ("unknown", None)):
+        await bridge.push(
+            {"type": "message", "data": {**INCOMING, "body": body, "age": age}}
+        )
+    await bridge.push(
+        {"type": "message", "data": {**INCOMING, "body": "end", "age": 0}}
+    )
+    for _ in range(100):
+        await hass.async_block_till_done()
+        if events and events[-1].data["body"] == "end":
+            break
+        await asyncio.sleep(0.02)
+    assert [e.data["body"] for e in events][:-1] == expected
+
+
+async def test_max_age_applies_to_poll_votes(
+    hass: HomeAssistant, setup_entry: MockConfigEntry, bridge: FakeBridge
+) -> None:
+    result = await hass.config_entries.options.async_init(setup_entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_OWN_MESSAGES: "off", "max_age_minutes": 1}
+    )
+    await _connected(hass, setup_entry)
+    events = async_capture_events(hass, "whatsapp_poll_vote_received")
+    await bridge.push({"type": "poll_vote", "data": {"voter": "old", "age": 120}})
+    await bridge.push({"type": "poll_vote", "data": {"voter": "new", "age": 5}})
+    for _ in range(100):
+        await hass.async_block_till_done()
+        if events:
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
+    await hass.async_block_till_done()
+    assert [e.data["voter"] for e in events] == ["new"]
