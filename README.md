@@ -461,7 +461,7 @@ Then check your **notifications** (bell icon) for the QR code and scan it with W
 
 ### Entities
 
-The integration adds a **WhatsApp** device:
+The integration adds a **WhatsApp** device. Entity ids follow the Home Assistant language (German: `binary_sensor.whatsapp_verbunden`, `button.whatsapp_whatsapp_web_neu_starten`, …); the ids below are for English.
 
 | Entity | Meaning |
 |---|---|
