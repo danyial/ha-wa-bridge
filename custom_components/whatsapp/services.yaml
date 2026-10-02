@@ -224,3 +224,79 @@ set_group_picture:
       required: false
       selector:
         text:
+
+search_messages:
+  name: Search messages
+  description: >-
+    Search WhatsApp messages (all chats, or one chat given by number, group or
+    group ID). Returns matching messages as a response. Only finds what
+    WhatsApp Web has on the linked device. Requires "Allow access to the
+    message history" in the integration options.
+  fields:
+    query:
+      name: Query
+      description: Text to search for.
+      required: true
+      selector:
+        text:
+    number:
+      name: Number
+      description: Only search the chat with this number (optional).
+      required: false
+      selector:
+        text:
+    group:
+      name: Group Name
+      description: Only search this group (optional).
+      required: false
+      selector:
+        text:
+    group_id:
+      name: Group ID
+      description: Only search this group (optional).
+      required: false
+      selector:
+        text:
+    limit:
+      name: Limit
+      description: Maximum number of messages (1–50).
+      required: false
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 50
+
+get_messages:
+  name: Get messages
+  description: >-
+    Return the latest messages of a chat as a response. Requires "Allow access
+    to the message history" in the integration options.
+  fields:
+    number:
+      name: Number
+      description: Chat with this number. One of number, group or group ID is required.
+      required: false
+      selector:
+        text:
+    group:
+      name: Group Name
+      description: Group by name.
+      required: false
+      selector:
+        text:
+    group_id:
+      name: Group ID
+      description: Group by ID.
+      required: false
+      selector:
+        text:
+    limit:
+      name: Limit
+      description: Number of latest messages (1–50).
+      required: false
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 50

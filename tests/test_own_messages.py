@@ -70,7 +70,11 @@ async def test_options_flow_default_and_reload(
     hass.config_entries.options.async_abort(result["flow_id"])
 
     await _set_mode(hass, setup_entry, "self")
-    assert setup_entry.options == {CONF_OWN_MESSAGES: "self", "max_age_minutes": 0}
+    assert setup_entry.options == {
+        CONF_OWN_MESSAGES: "self",
+        "max_age_minutes": 0,
+        "allow_message_history": False,
+    }
     await _connected(hass, setup_entry)
     assert setup_entry.runtime_data.bridge is not bridge_before, "reloaded"
 

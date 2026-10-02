@@ -16,6 +16,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -30,6 +31,7 @@ from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
 from .client import BridgeAuthError, BridgeError, async_probe
 from .const import (
+    CONF_ALLOW_HISTORY,
     CONF_DEFAULT_CHAT,
     CONF_HOST,
     CONF_MAX_AGE,
@@ -209,6 +211,10 @@ class WhatsAppOptionsFlow(OptionsFlowWithReload):
                                 unit_of_measurement="min",
                             )
                         ),
+                        vol.Required(
+                            CONF_ALLOW_HISTORY,
+                            default=options.get(CONF_ALLOW_HISTORY, False),
+                        ): BooleanSelector(),
                     }
                 ),
                 user_input or options,
