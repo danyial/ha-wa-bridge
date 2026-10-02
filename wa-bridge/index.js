@@ -138,6 +138,8 @@ const handleCommand = createCommandHandler({
     client,
     wwebjs: { MessageMedia, Poll, ScheduledEvent },
     isReady: () => status.status === 'ready',
+    resolver,
+    me: () => me,
     actions: {
         status: () => status.snapshot(),
         restart: () => restartClient('requested'),

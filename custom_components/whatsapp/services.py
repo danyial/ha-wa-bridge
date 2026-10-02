@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -18,7 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
 from .client import BridgeError, WhatsAppBridge
-from .const import DOMAIN, EVENT_GROUPS_RECEIVED
+from .const import CONF_ALLOW_HISTORY, DOMAIN, EVENT_GROUPS_RECEIVED, HISTORY_MAX_LIMIT
 from .helpers import normalize_chat_id
 from .media import async_load_media
 
@@ -87,6 +87,18 @@ SEND_EVENT_SCHEMA = vol.All(
     ),
     _has_target,
 )
+LIMIT = vol.All(vol.Coerce(int), vol.Range(min=1, max=HISTORY_MAX_LIMIT))
+SEARCH_MESSAGES_SCHEMA = vol.Schema(
+    {
+        **TARGET,
+        vol.Required("query"): cv.string,
+        vol.Optional("limit", default=20): LIMIT,
+    }
+)
+GET_MESSAGES_SCHEMA = vol.All(
+    vol.Schema({**TARGET, vol.Optional("limit", default=20): LIMIT}),
+    _has_target,
+)
 SET_GROUP_SUBJECT_SCHEMA = vol.Schema(
     {vol.Required("group_id"): cv.string, vol.Required("subject"): cv.string}
 )
@@ -96,11 +108,24 @@ SET_GROUP_PICTURE_SCHEMA = vol.All(
 )
 
 
-def _bridge(hass: HomeAssistant) -> WhatsAppBridge:
+def _entry(hass: HomeAssistant) -> ConfigEntry:
     for entry in hass.config_entries.async_entries(DOMAIN):
         if entry.state is ConfigEntryState.LOADED:
-            return entry.runtime_data.bridge
+            return entry
     raise ServiceValidationError("The WhatsApp integration is not loaded")
+
+
+def _bridge(hass: HomeAssistant) -> WhatsAppBridge:
+    return _entry(hass).runtime_data.bridge
+
+
+def _require_history(hass: HomeAssistant) -> None:
+    """Reading chats is opt-in: anyone who may call services could read all."""
+    if not _entry(hass).options.get(CONF_ALLOW_HISTORY, False):
+        raise ServiceValidationError(
+            "Access to the message history is off; enable it in the WhatsApp "
+            "integration options"
+        )
 
 
 _PHONE_LIKE = re.compile(r"^[+\d\s()./-]+$")
@@ -222,7 +247,33 @@ def async_setup_services(hass: HomeAssistant) -> None:
             },
         )
 
+    async def search_messages(call: ServiceCall) -> ServiceResponse:
+        _require_history(hass)
+        result = await _request(
+            hass,
+            {
+                "type": "search_messages",
+                **_target(hass, call.data),
+                "query": call.data["query"],
+                "limit": call.data["limit"],
+            },
+        )
+        return result or {"messages": []}
+
+    async def get_messages(call: ServiceCall) -> ServiceResponse:
+        _require_history(hass)
+        result = await _request(
+            hass,
+            {
+                "type": "get_messages",
+                **_target(hass, call.data),
+                "limit": call.data["limit"],
+            },
+        )
+        return result or {"messages": []}
+
     optional = SupportsResponse.OPTIONAL
+    only = SupportsResponse.ONLY
     for name, handler, schema, response in (
         ("send_message", send_message, SEND_MESSAGE_SCHEMA, optional),
         ("send_broadcast", send_broadcast, SEND_BROADCAST_SCHEMA, optional),
@@ -231,6 +282,8 @@ def async_setup_services(hass: HomeAssistant) -> None:
         ("get_groups", get_groups, vol.Schema({}), optional),
         ("set_group_subject", set_group_subject, SET_GROUP_SUBJECT_SCHEMA, None),
         ("set_group_picture", set_group_picture, SET_GROUP_PICTURE_SCHEMA, None),
+        ("search_messages", search_messages, SEARCH_MESSAGES_SCHEMA, only),
+        ("get_messages", get_messages, GET_MESSAGES_SCHEMA, only),
     ):
         hass.services.async_register(
             DOMAIN,

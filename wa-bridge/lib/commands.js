@@ -1,12 +1,21 @@
 'use strict';
 
 const { CommandError } = require('./server');
+const { summarize, clampLimit, TIMEOUT_MS, withTimeout } = require('./history');
 
 // Command handlers for the bridge. Each handler returns result data or throws;
 // the server turns that into a `result` frame. `reply` sends extra frames to
 // the requesting client only (the pre-2.x *_response frames, kept for older
 // integrations).
-function createCommandHandler({ client, wwebjs, isReady, actions = {}, log = console }) {
+function createCommandHandler({
+    client,
+    wwebjs,
+    isReady,
+    actions = {},
+    resolver = { phoneOf: async () => null },
+    me = () => ({ phone: null }),
+    log = console,
+}) {
     const { MessageMedia, Poll, ScheduledEvent } = wwebjs;
 
     function requireReady() {
@@ -163,6 +172,31 @@ function createCommandHandler({ client, wwebjs, isReady, actions = {}, log = con
             const sent = await client.sendMessage(chatId, new ScheduledEvent(cmd.name, start, options));
             log.log(`Sent event to ${chatId}`);
             return { chat_id: chatId, message_id: sent?.id?._serialized ?? null };
+        },
+
+        // Message history. Only what WhatsApp Web has locally: a linked device
+        // gets part of the history when it is paired.
+        async search_messages(cmd) {
+            requireReady();
+            const query = typeof cmd.query === 'string' ? cmd.query.trim() : '';
+            if (!query) throw new CommandError('invalid_request', 'query is required');
+            const hasTarget = cmd.number || cmd.group_name || cmd.group_id;
+            const chatId = hasTarget ? await resolveChatId(cmd) : undefined;
+            const limit = clampLimit(cmd.limit);
+            const found = await withTimeout(client.searchMessages(query, { chatId, limit }), TIMEOUT_MS);
+            const messages = await summarize(found.slice(0, limit), { client, resolver, me, log });
+            log.log(`Search returned ${messages.length} message(s)${chatId ? ` in ${chatId}` : ''}`);
+            return { query, chat_id: chatId ?? null, messages };
+        },
+
+        async get_messages(cmd) {
+            requireReady();
+            const chatId = await resolveChatId(cmd);
+            const limit = clampLimit(cmd.limit);
+            const chat = await client.getChatById(chatId);
+            const fetched = await withTimeout(chat.fetchMessages({ limit }), TIMEOUT_MS);
+            const messages = await summarize(fetched.slice(-limit), { client, resolver, me, log });
+            return { chat_id: chatId, chat_name: chat.name ?? null, messages };
         },
 
         async get_groups(cmd, reply) {

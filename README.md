@@ -502,6 +502,25 @@ actions:
 
 For other recipients, media, polls or groups by name use `whatsapp.send_message` and friends.
 
+### Searching and reading messages
+
+`whatsapp.search_messages` (text search, all chats or one) and `whatsapp.get_messages` (latest messages of a chat) return messages as a service response — for scripts, automations or an LLM/Assist tool. **Off by default:** enable *Allow access to the message history* in the integration options, knowing that anyone who can call services can then read all your chats.
+
+```yaml
+actions:
+  - action: whatsapp.search_messages
+    data:
+      query: Paket
+      number: "0170 1234567"   # optional: only this chat (or group / group_id)
+      limit: 10                # 1–50, default 20
+    response_variable: found
+  - action: notify.mobile_app_phone
+    data:
+      message: "{{ found.messages | map(attribute='body') | join('\n') }}"
+```
+
+Each message has `id`, `chat_id`, `chat_name`, `is_group`, `sender`, `sender_phone` (resolved for LID senders), `fromMe`, `body`, `type`, `hasMedia` and `timestamp`; media is not downloaded. Only what WhatsApp Web has on the linked device can be found: a newly linked device gets part of the history.
+
 ### Service responses
 
 `send_message`, `send_poll`, `send_event`, `send_broadcast` and `get_groups` can return data (`response_variable` in scripts), e.g. the sent message id or the group list. All services now fail with an error instead of silently doing nothing when the bridge is unreachable, WhatsApp is not linked, or a target is invalid.
