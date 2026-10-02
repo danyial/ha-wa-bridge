@@ -3,7 +3,7 @@
 
 # Home Assistant WhatsApp Integration
 
-> **Fork** of [raulpetruta/ha-wa-bridge](https://github.com/raulpetruta/ha-wa-bridge) with a hardened add-on (authenticated WebSocket, no host port by default), current whatsapp-web.js, status entities and LID-aware sender handling. Work in progress towards 3.0.0.
+> **Fork** of [raulpetruta/ha-wa-bridge](https://github.com/raulpetruta/ha-wa-bridge) with a hardened add-on (authenticated WebSocket, no host port by default), current whatsapp-web.js, status entities, LID-aware sender handling, notes to self, notify and message search. See the [3.0.0 release notes](https://github.com/danyial/ha-wa-bridge/releases/tag/v3.0.0) for what changed, including breaking changes.
 
 A custom integration to send and receive WhatsApp messages in Home Assistant naturally. It uses a local [whatsapp-web.js](https://wwebjs.dev/) bridge running in Docker.
 
